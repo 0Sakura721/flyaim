@@ -1,0 +1,45 @@
+{
+  "controller": "trigger",
+  "sink": "sendinput",
+  "source": "screen",
+  "frames": 487,
+  "wall_s": 55.09,
+  "tick_hz": 8.84,
+  "latency_ms": {
+    "act_p50": 103.239,
+    "act_p95": 124.002,
+    "inject_p50": 0.395,
+    "tick_p50": 107.864,
+    "tick_p95": 164.846,
+    "capture_age_p50": 54.614,
+    "capture_age_p95": 76.079,
+    "grab_p50": 1.761
+  },
+  "counts_total": [
+    -608,
+    -20
+  ],
+  "n_hits_env": 0,
+  "focus_losses": 0,
+  "telemetry": {
+    "frames": 487,
+    "jsonl": "D:\\dsh\\autoaim\\flyaim\\runs\\20261004-022932-play-hybrid085\\live\\telemetry.jsonl",
+    "bytes": 14050874,
+    "previews": 25
+  },
+  "gain": {
+    "counts_per_360": 4600.0,
+    "speed_fraction_per_action": 0.021875,
+    "max_counts_per_tick": 400.0,
+    "invert_x": false,
+    "invert_y": false,
+    "deadzone": 0.0,
+    "counts_per_action": 100.62,
+    "deg_per_count": 0.078261,
+    "deg_per_action": 7.875,
+    "semantics": "action=1.0 每拍扫过画面宽度的 speed_fraction_per_action 比例(与离线靶场 14px/640px 同语义);角度量经由 counts_per_360 折算。屏幕像素≈角度的线性近似与 tick 频率依赖见 gain.py docstring。"
+  },
+  "mode": "hybrid",
+  "n_fires": 0,
+  "n_hits_inferred": 0
+}

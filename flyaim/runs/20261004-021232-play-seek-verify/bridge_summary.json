@@ -1,0 +1,44 @@
+{
+  "controller": "trigger",
+  "sink": "sendinput",
+  "source": "screen",
+  "frames": 544,
+  "wall_s": 30.04,
+  "tick_hz": 18.11,
+  "latency_ms": {
+    "act_p50": 48.279,
+    "act_p95": 65.968,
+    "inject_p50": 0.348,
+    "tick_p50": 49.401,
+    "tick_p95": 104.952,
+    "capture_age_p50": 48.973,
+    "capture_age_p95": 73.566,
+    "grab_p50": 1.851
+  },
+  "counts_total": [
+    -254,
+    -298
+  ],
+  "n_hits_env": 0,
+  "telemetry": {
+    "frames": 544,
+    "jsonl": "D:\\dsh\\autoaim\\flyaim\\runs\\20261004-021232-play-seek-verify\\live\\telemetry.jsonl",
+    "bytes": 319550,
+    "previews": 28
+  },
+  "gain": {
+    "counts_per_360": 3400.0,
+    "speed_fraction_per_action": 0.021875,
+    "max_counts_per_tick": 400.0,
+    "invert_x": false,
+    "invert_y": false,
+    "deadzone": 0.0,
+    "counts_per_action": 74.38,
+    "deg_per_count": 0.105882,
+    "deg_per_action": 7.875,
+    "semantics": "action=1.0 每拍扫过画面宽度的 speed_fraction_per_action 比例(与离线靶场 14px/640px 同语义);角度量经由 counts_per_360 折算。屏幕像素≈角度的线性近似与 tick 频率依赖见 gain.py docstring。"
+  },
+  "mode": "seek",
+  "n_fires": 16,
+  "n_hits_inferred": 16
+}

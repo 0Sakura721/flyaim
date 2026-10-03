@@ -1,0 +1,16 @@
+{
+  "n_samples": 20,
+  "n_features": 1360,
+  "ridge_lambda": 10.0,
+  "r2": 0.9808420940034078,
+  "rmse": 0.09755314484478515,
+  "train_seeds": [
+    9000
+  ],
+  "feature_mean_abs": 85.96327216175852,
+  "feature_std_mean": 17.471654596142255,
+  "n_dead_features": 57,
+  "frozen_check": "passed",
+  "fingerprint": "((20642763, 98380888, 20642763), (4940175, 25796726, 4940175))",
+  "n_train_frames": 20
+}

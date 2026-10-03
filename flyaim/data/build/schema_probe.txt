@@ -1,0 +1,637 @@
+####################################################################################################
+# FlyAim A 线 —— MaleCNS v1.0 真实 schema 探查报告
+# 生成脚本: flyaim/data/_make_schema_probe.py(所有数字现场计算,非手抄)
+# 生成时刻(UTC): 2026-10-03T10:51:08Z
+# 数据集: MaleCNS v1.0 (Janelia/Cambridge/Google, CC-BY-4.0)
+####################################################################################################
+
+====================================================================================================
+0. 结论速览(TL;DR)—— 先看这里
+====================================================================================================
+
+[A] **MaleCNS v1.0 里有没有感光细胞? —— 有。** 6,098 个,superclass == 'ol_sensory':
+      type       数量     含义
+      R1-R6      3377    外感光细胞(运动/明暗,6 个一组被合并标注)
+      R7y/p/d/unclear 1385  内感光细胞 R7(色觉)
+      R8y/p/d/unclear 1329  内感光细胞 R8(色觉)
+      R7R8_unclear  85
+      HBeyelet        7   眼点(Hofbauer-Buchner eyelet,非复眼)
+    另有完整视叶:ol_intrinsic 89,403(含 T4 6,865 / T5 6,720 运动检测神经元)、
+    visual_projection 9,201、visual_centrifugal 563。
+    => manifest.visual_input_fallback = **False**。Retina 前端可以直接驱动**真实感光细胞**,
+       而不是虚构一个假眼睛。这一条推翻了 CONTRACT.md 早期"不含复眼/视叶"的判断。
+
+[B] **class 列有哪些取值?** 全量 211,577 行里 22 个取值,但 **185,064 行(87.5%)为 NaN**;
+    限定到 166,700 个神经元后仍有 140,187 行(84.1%)为 NaN,只剩 21 个取值,
+    且 **class 里没有 'descending'、没有 'motor'**。=> class **不能**做主选择器。
+    真正的功能分类主字段是 **superclass**(28 个取值,166,700 个神经元行**全部非空**)。
+
+[C] **权重文件是什么形状?** 是**边表**不是矩阵:
+    (body_pre:int64, body_post:int64, weight:int64),**151,856,684 行**,2318 个 record batch,
+    按 weight 降序排列。稀疏度 = 151,856,684 / 166,700² = 0.5464%。
+
+[D] **索引口径** N = 166,700 = annotations 中 superclass 非空的行数(bodyId 升序 -> 索引 0..N-1)。
+    全量 211,577 行中排除 44,877 行(glia 11,864 / Unimportant 10,751 / Orphan 12,075 /
+    Out of scope 等,均无 superclass,不是神经元)。
+
+====================================================================================================
+1. 下载文件清单与校验和
+====================================================================================================
+key                           bytes         MB  attempts     sec  sha256
+----------------------------------------------------------------------------------------------------
+annotations              14,483,314      14.48         1    5.47  2177e246113e4cfbf1e7772ec37c6da1955ff22e8063d0b1f833101f99a9a3b2
+weights               1,051,241,946    1051.24         1  191.51  e35da783d1c686b2b58b3b87cd6a403ae43bfcfba8bff28e08ef752c1a56afc1
+neurotransmitters        43,282,834      43.28         1   13.33  95c9289220663abeb3409f3ad9e5a7f8a53f8093f5139d15502cd08da8879621
+body_stats              778,062,826     778.06         1  138.05  ca5dc83a26382ae70c8d8f42fc09ce2dbc1af7c03f3a001a1936b5e142540647
+
+URL:
+  annotations          https://storage.googleapis.com/flyem-male-cns/v1.0/connectome-data/flat-connectome/body-annotations-male-cns-v1.0-minconf-0.5.feather
+  weights              https://storage.googleapis.com/flyem-male-cns/v1.0/connectome-data/flat-connectome/connectome-weights-male-cns-v1.0-minconf-0.5.feather
+  neurotransmitters    https://storage.googleapis.com/flyem-male-cns/v1.0/connectome-data/flat-connectome/body-neurotransmitters-male-cns-v1.0.feather
+  body_stats           https://storage.googleapis.com/flyem-male-cns/v1.0/connectome-data/flat-connectome/body-stats-male-cns-v1.0-minconf-0.5.feather
+
+====================================================================================================
+2. body-annotations-male-cns-v1.0-minconf-0.5.feather
+====================================================================================================
+形状: 211,577 行 × 36 列
+
+2.1 全部列名 / dtype / 唯一值数 / NaN 数 / 样例(前 3 个值)
+----------------------------------------------------------------------------------------------------
+  # column                       dtype                nunique       nan  sample
+----------------------------------------------------------------------------------------------------
+  0 assignedOlHex1               float64                   36   187,857  [np.float64(12.0), np.float64(28.0), np.float64(5.0)]
+  1 assignedOlHex2               float64                   39   187,857  [np.float64(26.0), np.float64(22.0), np.float64(9.0)]
+  2 bodyId                       int64                211,577         0  [np.int64(10001), np.int64(10002), np.int64(10003)]
+  3 flywireType                  str                    8,199    68,421  ['DNp01', 'OCG01d', 'VCH']
+  4 group                        float64               13,747    64,063  [np.float64(10001.0), np.float64(10002.0), np.float64(10003.
+  5 instance                     str                   23,932    50,071  ['DNp01(GF)_R', 'OCG01d_L', 'VCH_R']
+  6 somaSide                     str                        3    60,851  ['R', 'L', 'M']
+  7 statusLabel                  category                  19       887  ['Roughly traced', 'Prelim Roughly traced', 'Unimportant']
+  8 superclass                   str                       27    44,877  ['descending_neuron', 'visual_projection', 'visual_centrifug
+  9 type                         str                   11,751    47,071  ['DNp01', 'OCG01d', 'VCH']
+ 10 vfbId                        str                  166,686    44,891  ['VFB_jrmc30my', 'VFB_jrmc1nh6', 'VFB_jrmc074n']
+ 11 hemibrainType                str                    4,495   178,658  ['Giant Fiber', 'OCG01', 'VCH']
+ 12 itoleeHl                     str                      203   173,823  ['putative_primary', 'no_lineage', 'VLPl&p1_lateral']
+ 13 supertype                    str                    1,925   177,481  ['10006', '10015', '10021']
+ 14 birthtime                    str                        2   203,673  ['early', 'late']
+ 15 mancBodyid                   float64               18,277   192,862  [np.float64(10000.0), np.float64(10002.0), np.float64(10012.
+ 16 mancGroup                    float64                5,830   197,023  [np.float64(10000.0), np.float64(10012.0), np.float64(10061.
+ 17 mancType                     str                    3,893   188,833  ['DNp01', 'DNp18', 'DNxl053']
+ 18 subclass                     str                       49   189,647  ['lt', 'xn', 'xl']
+ 19 synonyms                     str                      280   207,622  ['Kennedy and Broadie 2018: GF', 'fru-M-100201', 'Matsuo 201
+ 20 class                        str                       21   185,064  ['MBON', 'ALPN', 'CX']
+ 21 rootSide                     str                        3   193,638  ['L', 'R', 'unknown']
+ 22 somaNeuromere                str                       21   189,757  ['LB', 'MX', 'DC']
+ 23 trumanHl                     str                       76   191,824  ['03B_put1', '00B', '09B_put1']
+ 24 dimorphism                   str                        4   209,209  ['male-specific', 'potentially sexually dimorphic', 'potenti
+ 25 matchingNotes                str                      277   208,152  ['extra VNC branch mcns', 'biological variability', 'mcns bu
+ 26 entryNerve                   str                       21   199,742  ['AN', 'aPhN', 'AbN4']
+ 27 mancSerial                   float64                  939   206,155  [np.float64(11305.0), np.float64(10052.0), np.float64(11210.
+ 28 mcnsSerial                   float64                  707   207,632  [np.float64(10041.0), np.float64(10069.0), np.float64(10071.
+ 29 serialMotif                  str                        8   210,675  ['brain convergent', 'independent', 'vnc convergent']
+ 30 fruDsx                       str                        6   206,565  ['fru_low', 'fru_high', 'dsx_high']
+ 31 exitNerve                    str                       28   210,572  ['PhN', 'NCC', 'CvN']
+ 32 receptorType                 str                        3   210,825  ['putative_ppk25', 'putative_ppk23', 'putative_IR52b']
+ 33 somaLocation                 object             n/a(list)    69,796  [array([37124, 22258, 36274]), array([50214, 10279, 27497]),
+ 34 tosomaLocation               object             n/a(list)   210,582  [array([59041, 40434, 26364]), array([59111, 40346, 26227]),
+ 35 status                       str                        6     5,472  ['Traced', 'Unimportant', 'Glia']
+
+2.2 「神经元行」的判别依据(为什么是 166,700 而不是 211,577)
+    全量行数                     = 211,577
+    superclass 非空(神经元)      = 166,700   <-- 采用为 N
+    vfbId 非空                    = 166,686(差 14 个:神经元但无 VFB 编号)
+    superclass 为空(非神经元)    = 44,877
+    -> 无 superclass 的行其 statusLabel 全部是 Glia / Unimportant / Orphan / Out of scope / Anchor 之类,不参与连接组仿真。
+
+    statusLabel × superclass 是否非空:
+    statusLabel                      非神经元        神经元
+    0.5assign                       1,832          0
+    <NA>                              876         11
+    Anchor                            271         12
+    Glia                           11,864          0
+    Hard to trace                     103          1
+    Leaves                            416        112
+    Orphan                         12,071          4
+    Orphan hotknife                 1,427          1
+    Orphan-artifact                 2,292         26
+    Out of scope                    2,594      1,991
+    PRT Orphan                         76         64
+    Partially traced                    9         17
+    Prelim Roughly traced              17     36,370
+    RT Hard to trace                    2      2,017
+    RT Orphan                           0          3
+    Reviewed                            4     54,062
+    Roughly traced                      1     71,978
+    Sensory Anchor                     78         23
+    Soma Anchor                       193          8
+    Unimportant                    10,751          0
+
+    bodyId: min=10,001  max=1,571,825,087  唯一=211,577  严格升序=True
+
+2.3 superclass 全量取值(28 个;这是本数据集真正的功能分类主字段)
+----------------------------------------------------------------------------------------------------
+    ol_intrinsic                                    89,403
+    cb_intrinsic                                    32,164
+    vnc_intrinsic                                   13,161
+    visual_projection                                9,201
+    vnc_sensory                                      6,370
+    ol_sensory                                       6,098
+    cb_sensory                                       4,868
+    ascending_neuron                                 1,846
+    descending_neuron                                1,314
+    vnc_motor                                          708
+    visual_centrifugal                                 563
+    sensory_ascending                                  537
+    cb_motor                                           107
+    vnc_efferent                                        94
+    cb_endocrine                                        72
+    ENS                                                 50
+    vnc_tbc                                             38
+    vnc_sensory_tbc                                     36
+    vnc_endocrine                                       22
+    cb_sensory_tbc                                      14
+    sensory_descending                                  12
+    efferent_ascending                                   8
+    efferent_descending                                  4
+    cb_efferent                                          4
+    visual_projection_tbc                                2
+    sensory_ascending_tbc                                2
+    descending_neuron_tbc                                2
+    (合计)                                           166,700
+
+2.4 class 全量取值(全量 211,577 行)
+----------------------------------------------------------------------------------------------------
+    <NA>                                           185,064
+    visual                                           6,091
+    Kenyon_Cell                                      4,064
+    CX                                               2,950
+    olfactory                                        2,639
+    mechanosensory_tactile                           2,558
+    mechanosensory                                   1,733
+    unknown_sensory                                  1,712
+    mechanosensory_proprioceptive                    1,454
+    gustatory                                        1,428
+    ALPN                                               686
+    ALLN                                               420
+    DAN                                                340
+    ol_bilateral                                       116
+    MBON                                                97
+    hygrosensory                                        66
+    chemosensory                                        58
+    SEZPN                                               27
+    thermosensory                                       25
+    ALIN                                                24
+    ALON                                                14
+    mechanosensory_tbc                                  11
+
+2.5 class 全量取值(仅 166,700 个神经元)—— 21 个取值,**没有 'descending'/'motor'**
+----------------------------------------------------------------------------------------------------
+    <NA>                                           140,187
+    visual                                           6,091
+    Kenyon_Cell                                      4,064
+    CX                                               2,950
+    olfactory                                        2,639
+    mechanosensory_tactile                           2,558
+    mechanosensory                                   1,733
+    unknown_sensory                                  1,712
+    mechanosensory_proprioceptive                    1,454
+    gustatory                                        1,428
+    ALPN                                               686
+    ALLN                                               420
+    DAN                                                340
+    ol_bilateral                                       116
+    MBON                                                97
+    hygrosensory                                        66
+    chemosensory                                        58
+    SEZPN                                               27
+    thermosensory                                       25
+    ALIN                                                24
+    ALON                                                14
+    mechanosensory_tbc                                  11
+    NaN 行数 = 140,187 / 166,700 (84.1%)  <-- 所以不能用 class 做角色选择
+
+2.6 其他分类列(仅神经元)
+  -- subclass --
+    <NA>                                           144,771
+    BI                                               3,336
+    IR                                               3,048
+    mechanosensory bristle                           2,206
+    BR                                               1,883
+    BA                                               1,336
+    abdomen                                          1,145
+    CR                                               1,039
+    leg                                                873
+    II                                                 838
+    leg bristle                                        768
+    wind_gravity                                       475
+
+  -- somaSide --
+    R                                               74,235
+    L                                               74,070
+    <NA>                                            18,003
+    M                                                  392
+
+  -- somaNeuromere --
+    <NA>                                           144,901
+    T2                                               5,074
+    T1                                               4,286
+    T3                                               3,973
+    CG                                               2,396
+    LB                                               1,312
+    A1                                                 933
+    TC                                                 729
+    DC                                                 568
+    MX                                                 500
+    MD                                                 372
+    A2                                                 273
+
+  -- rootSide --
+    <NA>                                           148,794
+    R                                                9,713
+    L                                                7,779
+    unknown                                            414
+
+  -- statusLabel --
+    Roughly traced                                  71,978
+    Reviewed                                        54,062
+    Prelim Roughly traced                           36,370
+    RT Hard to trace                                 2,017
+    Out of scope                                     1,991
+    Leaves                                             112
+    PRT Orphan                                          64
+    Orphan-artifact                                     26
+    Sensory Anchor                                      23
+    Partially traced                                    17
+    Anchor                                              12
+    <NA>                                                11
+
+
+====================================================================================================
+3. ★ 关键问题:MaleCNS v1.0 里到底有没有感光细胞?
+====================================================================================================
+
+回答:**有。** 复眼外感光细胞 R1-R6 与内感光细胞 R7/R8 都在,另有 7 个 HBeyelet(眼点)。
+
+证据链(4 条独立证据互相印证):
+  E1. class == 'visual' 恰好 6,091 个,与 'type 以 R 开头' 的集合完全一致(逐行核对,差异 0)。
+  E2. 这 6,091 个细胞的 superclass **100% 都是 'ol_sensory'**(optic-lobe sensory)。
+  E3. 'ol_sensory' 总共 6,098 个 = 上述 6,091 个 + 7 个 HBeyelet;type 取值全部是感光细胞命名。
+  E4. 视叶中间神经元与投射神经元齐备(T4/T5 运动检测 13,585;L1-L5 单极细胞 8,902;
+      ME/LO/LC/LPC 视叶投射 8,686;visual_projection 共 9,201)。
+      -> 这是一个**完整的视叶通路**,不是零散碎片。
+
+3.1 ol_sensory(superclass)的 type 全量取值
+----------------------------------------------------------------------------------------------------
+    R1-R6                                            3,377
+    R7y                                                482
+    R8y                                                481
+    R8_unclear                                         442
+    R7_unclear                                         404
+    R7p                                                332
+    R8p                                                330
+    R7R8_unclear                                        85
+    R7d                                                 82
+    R8d                                                 76
+    HBeyelet                                             7
+    (合计)                                             6,098
+
+3.2 'type 以 R 开头' 的集合(感光细胞命名法)
+----------------------------------------------------------------------------------------------------
+    R1-R6                                            3,377
+    R7y                                                482
+    R8y                                                481
+    R8_unclear                                         442
+    R7_unclear                                         404
+    R7p                                                332
+    R8p                                                330
+    R7R8_unclear                                        85
+    R7d                                                 82
+    R8d                                                 76
+    (合计)                                             6,091
+    其中 superclass 取值集合 = ['ol_sensory']
+    R 集合 ⊂ ol_sensory ? True
+
+3.3 class == 'visual' 的数量与 R 集合的逐行一致性
+    class=='visual'                     n = 6,091
+    type^R                              n = 6,091
+    对称差(不一致的行数)                = 0
+
+3.4 这些感光细胞的追踪质量(statusLabel)
+----------------------------------------------------------------------------------------------------
+    Reviewed                                         2,603
+    Out of scope                                     1,982
+    RT Hard to trace                                   569
+    Roughly traced                                     553
+    Prelim Roughly traced                              342
+    Leaves                                              40
+    Anchor                                               1
+    <NA>                                                 1
+
+3.5 视叶通路各层级细胞数
+----------------------------------------------------------------------------------------------------
+    感光细胞 (ol_sensory / class=='visual')              6,091
+    视叶中间神经元 (ol_intrinsic)                          89,403
+      其中 T4(运动检测,ON 通路)                              6,865
+      其中 T5(运动检测,OFF 通路)                             6,720
+      其中 L1-L5(lamina 单极细胞)                          8,884
+    视觉投射神经元 (visual_projection)                      9,201
+    视觉离心神经元 (visual_centrifugal)                       563
+
+====================================================================================================
+4. 视叶 / 视觉投射类 type 前缀统计(为 Retina 选择输入靶点用)
+====================================================================================================
+type 前缀          count   主要 superclass
+----------------------------------------------------------------------------------------------------
+R1               3,377   {'ol_sensory': 3377}
+R7               1,385   {'ol_sensory': 1385}
+R8               1,329   {'ol_sensory': 1329}
+T4               6,865   {'ol_intrinsic': 6865}
+T5               6,720   {'ol_intrinsic': 6720}
+L1               1,776   {'ol_intrinsic': 1776}
+L2               1,797   {'ol_intrinsic': 1779, 'cb_intrinsic': 18}
+L3               1,772   {'ol_intrinsic': 1772}
+L4               1,770   {'ol_intrinsic': 1770}
+L5               1,787   {'ol_intrinsic': 1787}
+Mi               9,589   {'ol_intrinsic': 9589}
+Tm              28,042   {'ol_intrinsic': 27565, 'visual_projection': 477}
+T1               1,777   {'ol_intrinsic': 1777}
+T2               3,502   {'ol_intrinsic': 3502}
+T3               1,940   {'ol_intrinsic': 1940}
+C2               1,745   {'ol_intrinsic': 1745}
+C3               1,779   {'ol_intrinsic': 1779}
+Lawf               744   {'ol_intrinsic': 744}
+VPN                  0   -
+LPC                380   {'visual_projection': 380}
+LC               4,257   {'visual_projection': 4164, 'ol_intrinsic': 88}
+ME               3,140   {'visual_projection': 1891, 'ol_intrinsic': 1186}
+LO                 909   {'visual_projection': 676, 'visual_centrifugal': 117}
+
+注:'VPN' 前缀为 0 —— 该数据集用 superclass=='visual_projection'(9,201 个)表达同一概念,
+    而不是在 type 名里加 VPN 前缀。'ME'/'LO'/'LC'/'LPC' 前缀则是 type 名的一部分
+    (视叶 medulla/lobula/lobula-plate 投射命名法),均已统计在上表中。
+    neuron_index.parquet 里 type 的唯一值数 = 11,751
+
+====================================================================================================
+5. connectome-weights-male-cns-v1.0-minconf-0.5.feather —— 是边表,不是矩阵
+====================================================================================================
+文件字节数     : 1,051,241,946 (1051.24 MB)
+record batches : 2318(每批 65,536 行,最后一批 9,772 行)
+总行数(边数)   : 151,856,684
+schema         : ['body_pre', 'body_post', 'weight']
+列 dtype       : body_pre=int64, body_post=int64, weight=int64
+
+head(5):
+ body_pre  body_post  weight
+    10352      10351    2591
+    13612      16076    2443
+    10663      10051    2248
+    10289      10611    2230
+    10893      10066    1929
+tail(5)(可见按 weight 降序排列):
+  body_pre  body_post  weight
+1571851794 1536896758       1
+1571860301 1053899380       1
+1571860301 1090282676       1
+1571860301 1132180951       1
+1571860301 1140566930       1
+
+5.1 语义映射(契约要求 W[i, j] = j -> i 的投射强度)
+    weight 列 = **突触计数**(非负整数)
+    row 索引  = index(body_post)(突触后 = 接收方)
+    col 索引  = index(body_pre) (突触前 = 发送方)
+    形状 (N, N) = (166,700, 166,700);全连接密度上界 27,788,890,000 个位置
+    实测稀疏度    = 0.5465%  (契约文档写的 ~0.45% 略低)
+
+5.2 本次构建的过滤与自检结果(来自 build_state.json)
+    n_weights_rows_total               = 151856684
+    n_edges_kept                       = 25582938
+    n_edges_dropped                    = 126273746
+    n_edges_dropped_pre_outside        = 4802752
+    n_edges_dropped_post_outside       = 112633588
+    n_edges_dropped_both_outside       = 8837406
+    n_duplicate_pairs_collapsed        = 0
+    weight_min                         = 1
+    weight_max                         = 2591
+
+5.3 ★ 为什么 151.9M 行只剩 25.6M 条边?端点归属的完整分解
+    A = 166,700 个神经元(superclass 非空,即全局索引空间)
+    B = 44,877 个有标注但无 superclass 的 body(glia/unimportant/orphan/...)
+    C = 不在 annotations 里的对象
+----------------------------------------------------------------------------------------------------
+    前->后                    边数       占比           突触计数合计      占突触比
+    A-C            112,452,244  74.052%      170,414,577   54.649%
+    A-A             25,582,938  16.847%      124,177,617   39.822%
+    C-C              7,977,814   5.254%        9,199,680    2.950%
+    C-A              4,552,783   2.998%        5,614,376    1.800%
+    B-C                766,887   0.505%        1,131,611    0.363%
+    B-A                249,969   0.165%          661,930    0.212%
+    A-B                181,344   0.119%          476,820    0.153%
+    C-B                 78,570   0.052%          107,066    0.034%
+    B-B                 14,135   0.009%           49,566    0.016%
+
+    关键结论: 74.05% 的行其 body_post **不是任何有标注的 body**。
+    采样实测(.cache 诊断脚本):
+      body_pre  : 1,160,000 行样本里只有 35,646 个唯一值(3.1%),100% 落在 body 列表内,
+                  93.4% 在 annotations 内 -> body_pre 确实是「突触前 body」。
+      body_post : 同一批样本里 1,019,892 个唯一值(87.9%),只有 21.4% 落在 body 列表内;
+                  不在 annotations 的那些取值 99.6% 互不相同,且只有 1.71% 出现在
+                  body-neurotransmitters 的 1,835,518 个 body 里,几乎从不作为 body_pre 出现。
+    => 上游「全量」文件把突触摊到了**未追踪的碎片对象**上(每个对象通常只接收 1-2 个突触);
+       按契约索引口径只保留两端都是 166,700 神经元的边,是正确做法。
+    按 weight 分桶(更强的证据):
+      w=1        边数     94,185,919   其中两端都在 A     10,299,701  ( 10.935%)
+      w=2..9     边数     54,870,855   其中两端都在 A     12,529,262  ( 22.834%)
+      w=10..99   边数      2,744,390   其中两端都在 A      2,698,475  ( 98.327%)
+      w>=100     边数         55,520   其中两端都在 A         55,500  ( 99.964%)
+      -> weight>=10 的边有 98.3% 两端都是神经元,weight>=100 的达 99.96%。
+         丢失的几乎全是 weight=1 的「神经元 -> 碎片」接触。
+    W_exc.nnz                          = 20,642,763
+    W_inh.nnz                          = 4,940,175
+    W_exc.nnz + W_inh.nnz              = 25,582,938
+    W_exc.dtype / shape                = float32 / (166700, 166700)
+    一致性自检 (nnz 合计 == 过滤后边数)            = 通过
+
+====================================================================================================
+6. body-neurotransmitters-male-cns-v1.0.feather —— 抑制性判定来源
+====================================================================================================
+形状: 1,835,518 行 × 10 列(一行一个 body,覆盖面远大于 166,700)
+schema: ['body:int64', 'cell_type:str', 'total_nt_predictions:int32', 'predicted_nt_confidence:float64', 'predicted_nt:str', 'ground_truth:str', 'celltype_total_nt_predictions:int32', 'celltype_predicted_nt:str', 'celltype_predicted_nt_confidence:float64', 'consensus_nt:str']
+
+head(5):
+ body cell_type  total_nt_predictions  predicted_nt_confidence  predicted_nt  ground_truth  celltype_total_nt_predictions celltype_predicted_nt  celltype_predicted_nt_confidence  consensus_nt
+10001     DNp01                  1015                 0.500496 acetylcholine           NaN                           1991         acetylcholine                          0.528263 acetylcholine
+10002    OCG01d                  1443                 0.955895 acetylcholine           NaN                           2818         acetylcholine                          0.956476 acetylcholine
+10003       VCH                  4425                 0.879325          gaba          gaba                           8721                  gaba                          0.874799          gaba
+10005   AOTU019                  2837                 0.835076          gaba          gaba                           5673                  gaba                          0.830504          gaba
+10006        VS                   426                 0.904134 acetylcholine acetylcholine                           5260         acetylcholine                          0.820038 acetylcholine
+
+6.x predicted_nt 取值分布
+    unclear                                      1,684,226
+    acetylcholine                                   95,420
+    glutamate                                       28,199
+    gaba                                            20,358
+    dopamine                                         4,447
+    histamine                                        2,259
+    serotonin                                          483
+    octopamine                                         126
+
+6.x consensus_nt 取值分布
+    unclear                                      1,671,117
+    acetylcholine                                  104,193
+    glutamate                                       29,443
+    gaba                                            22,196
+    histamine                                        8,024
+    dopamine                                           396
+    octopamine                                         101
+    serotonin                                           48
+
+6.x ground_truth 取值分布
+    <NA>                                         1,750,034
+    acetylcholine                                   52,779
+    glutamate                                       14,397
+    gaba                                            13,150
+    histamine                                        4,683
+    dopamine                                           380
+    octopamine                                          51
+    serotonin                                           44
+
+6.x celltype_predicted_nt 取值分布
+    unclear                                      1,673,617
+    acetylcholine                                   98,512
+    glutamate                                       29,016
+    gaba                                            21,483
+    histamine                                        7,969
+    dopamine                                         4,448
+    serotonin                                          386
+    octopamine                                          87
+
+6.y 合并进 neuron_index 的策略(missing/unclear 逐级回退)
+    优先级: ground_truth > consensus_nt > predicted_nt,跳过 '' / 'unclear' / NaN。
+    nt 覆盖                 = 166,700 个神经元
+    nt 取值分布(索引空间)  = {'acetylcholine': 104049, 'glutamate': 29622, 'gaba': 22122, 'histamine': 7905, 'unknown': 2100, 'dopamine': 395, 'serotonin': 375, 'octopamine': 132}
+    nt 来源分布             = {'ground_truth': 85484, 'consensus_nt': 78039, 'none': 2100, 'predicted_nt': 1077}
+    抑制性判定: 契约 INHIBITORY_NTS = {gaba, glycine, acetylcholine_gaba}
+    -> n_inhibitory = 22,122  (全部为 GABA;本数据集无 glycine 预测)
+
+    ⚠ 已知偏差: 7,905 个细胞预测为 histamine,其中包含**全部 R1-R6 感光细胞**。
+      契约的抑制性集合不含 histamine,故'感光细胞 -> lamina'的输出边被归入 W_exc。
+      生物学上组胺在 lamina 对 LMC 是抑制性的 —— 这是符号近似,已记入 manifest.notes。
+
+====================================================================================================
+7. body-stats-male-cns-v1.0-minconf-0.5.feather —— 不含 soma 坐标
+====================================================================================================
+shape: 88,384,522 行 × 11 列,batches=1349
+schema: ['body', 'pre', 'post', 'status_fine', 'superclass', 'class', 'type', 'instance', 'downstream', 'synweight', 'rank']
+head(3):
+ body   pre   post    status_fine   superclass class type instance  downstream  synweight  rank
+10009 31347  82705 Roughly traced ol_intrinsic   NaN  CT1    CT1_L      188515     271220     1
+10157 29405  75837 Roughly traced ol_intrinsic   NaN  CT1    CT1_R      177665     253502     2
+10977 16911 118348 Roughly traced cb_intrinsic   NaN  APL    APL_L      133530     251878     3
+
+结论:**该文件没有任何 soma x/y/z 坐标列**(逐列核对:body/pre/post/status_fine/superclass/class/type/instance/downstream/synweight/rank)。
+     -> connectome.npz 里没有 soma_pos 数组。
+     -> 感光细胞的左右视野划分不能用体坐标;可用 neuron_index.parquet 里的
+        assignedOlHex1/2(视叶六边形坐标)或按索引顺序自行划分。
+
+====================================================================================================
+8. 产物 neuron_index.parquet 的实际 schema
+====================================================================================================
+形状: 166,700 行 × 18 列(行序 == 全局索引 0..N-1)
+索引列名 = (无)
+
+column                 dtype               nan  sample
+----------------------------------------------------------------------------------------------------
+body_id                int64                 0  [np.int64(10001), np.int64(10002), np.int64(10003)]
+name                   str                   0  ['DNp01(GF)_R', 'OCG01d_L', 'VCH_R']
+class                  str                   0  ['unknown', 'MBON', 'ALPN']
+superclass             str                   0  ['descending_neuron', 'visual_projection', 'visual_c
+type                   str                   0  ['DNp01', 'OCG01d', 'VCH']
+side                   str                   0  ['R', 'L', 'M']
+nt                     str                   0  ['acetylcholine', 'gaba', 'octopamine']
+flywireType            str                   0  ['DNp01', 'OCG01d', 'VCH']
+hemibrainType          str                   0  ['Giant Fiber', 'OCG01', 'VCH']
+subclass               str                   0  ['lt', 'unknown', 'xn']
+statusLabel            str                   0  ['Roughly traced', 'Prelim Roughly traced', 'Reviewe
+vfbId                  str                   0  ['VFB_jrmc30my', 'VFB_jrmc1nh6', 'VFB_jrmc074n']
+somaNeuromere          str                   0  ['unknown', 'LB', 'MX']
+rootSide               str                   0  ['unknown', 'L', 'R']
+nt_source              str                   0  ['consensus_nt', 'ground_truth', 'predicted_nt']
+nt_confidence          float32           2,255  [np.float32(0.52826333), np.float32(0.9564758), np.f
+assignedOlHex1         float32         142,980  [np.float32(12.0), np.float32(28.0), np.float32(5.0)
+assignedOlHex2         float32         142,980  [np.float32(26.0), np.float32(22.0), np.float32(9.0)
+
+head(3):
+       body_id         name    class          superclass    type side             nt flywireType hemibrainType subclass            statusLabel         vfbId somaNeuromere rootSide     nt_source  nt_confidence  assignedOlHex1  assignedOlHex2
+index                                                                                                                                                                                                                                           
+0        10001  DNp01(GF)_R  unknown   descending_neuron   DNp01    R  acetylcholine       DNp01   Giant Fiber       lt         Roughly traced  VFB_jrmc30my       unknown  unknown  consensus_nt       0.528263             NaN             NaN
+1        10002     OCG01d_L  unknown   visual_projection  OCG01d    L  acetylcholine      OCG01d         OCG01  unknown         Roughly traced  VFB_jrmc1nh6       unknown  unknown  consensus_nt       0.956476             NaN             NaN
+2        10003        VCH_R  unknown  visual_centrifugal     VCH    R           gaba         VCH           VCH  unknown  Prelim Roughly traced  VFB_jrmc074n       unknown  unknown  ground_truth       0.874799             NaN             NaN
+
+8.1 索引口径(最终确定)
+    N = 166,700 = superclass 非空的神经元行数,bodyId 升序 -> 索引 0..N-1
+    body_id 严格升序: True
+    body_id 唯一: True
+    weights 中端点不在该集合内的边已丢弃(数量见 5.2)。
+
+====================================================================================================
+9. ★ 独立交叉验证:与官方 traced-only 文件的对比(最强的正确性证据)
+====================================================================================================
+
+列出 GCS 桶(https://storage.googleapis.com/flyem-male-cns?prefix=v1.0/connectome-data/)
+发现同一份 flat-connectome 还提供两个**官方过滤版本**:
+    connectome-weights-male-cns-v1.0-minconf-0.5.feather                 1,051,241,946 B  (我们用的「全量」)
+    connectome-weights-male-cns-v1.0-minconf-0.5-traced-only.feather       508,025,642 B
+    connectome-weights-male-cns-v1.0-minconf-0.5-significant-only.feather  502,169,298 B
+9.1 traced-only 文件结构
+    列 = ['body_pre', 'body_post', 'weight', 'type_pre', 'type_post'](比全量文件多了 type_pre / type_post!)
+    行数(边) = 25,563,197
+    两端都在 A 的边 = 25,558,671  (99.98%)  <- 几乎 100%,说明它就是官方神经元级连接组
+    两端都在 A 的突触合计 = 124,009,893
+
+9.2 对比:我们的「全量文件挑 A-A 子集」vs 官方 traced-only
+    指标                                我们(A-A of full)     traced-only(A-A)           差异
+    边数                                     25,582,938           25,558,671      +24,267
+    突触合计                                  124,177,616          124,009,893     +167,723
+    相对差异                                                                        +0.095%
+    => 两者一致性 99.9% 以上。我们的产物是官方神经元级连接组的超集(多保留了 24,267 条边),因为这些边在「全量」文件里存在、且两端都在契约索引空间内。
+
+9.3 方向约定的独立确认(用 traced-only 的 type_pre/type_post 列)
+    抽 200,000 行,把 body_pre/body_post 映射到我们的全局索引,再与 neuron_index.type 比:
+      body_pre  在索引集内 = 100.00%;type_pre  与我们的 type 完全一致 = 100.00%
+      body_post 在索引集内 = 100.00%;type_post 与我们的 type 完全一致 = 100.00%
+    => (a) 我们的 166,700 索引空间与官方神经元级连接组的 body ID 空间**完全一致**;
+       (b) 字段确实是 pre=突触前 / post=突触后;
+       (c) 因此 W[i,j]=j->i(row=body_post, col=body_pre)的落盘约定正确;
+       (d) 我们的 annotation->index 映射没有任何错位。
+
+9.4 生物学合理性验证(过滤后子图,整群一起聚合,非抽样)
+      R1-R6 的输出靶(n=3,377) top-10: ol_intrinsic/L2=107646, ol_intrinsic/L1=103403, ol_intrinsic/L3=23481, ol_intrinsic/Lai=5123, ol_intrinsic/T1=3792, ol_intrinsic/L4=1776, ol_intrinsic/unknown=764, ol_sensory/R1-R6=737, ol_intrinsic/C3=567, ol_intrinsic/L5=288
+      T4 的输入来源(n=6,865) top-10: ol_intrinsic/Mi1=420119, ol_intrinsic/CT1=85347, ol_intrinsic/TmY15=82685, ol_intrinsic/Mi9=73390, ol_intrinsic/Tm3=62627, ol_intrinsic/Y11=32742, ol_intrinsic/Y12=30986, ol_intrinsic/TmY19a=24329, ol_intrinsic/Pm10=24143, ol_intrinsic/Tlp13=21454
+      T5 的输入来源(n=6,720) top-10: ol_intrinsic/Tm9=208613, ol_intrinsic/Tm2=189175, ol_intrinsic/CT1=145379, ol_intrinsic/TmY15=48640, ol_intrinsic/Tm1=44212, ol_intrinsic/Tm23=35208, ol_intrinsic/LT33=35067, ol_intrinsic/Y11=30262, ol_intrinsic/TmY19a=23100, ol_intrinsic/Y12=22122
+      L1-L5 的输出靶(n=8,884) top-10: ol_intrinsic/Tm2=157090, ol_intrinsic/Dm6=136421, ol_intrinsic/Mi1=116306, ol_intrinsic/Dm18=97882, ol_intrinsic/Dm19=93761, ol_intrinsic/Dm12=74166, ol_intrinsic/Dm1=58254, ol_intrinsic/Dm13=57888, ol_intrinsic/L5=57227, ol_intrinsic/Dm20=51046
+    => 全部命中教科书回路:
+       R1-R6 -> L2(107,646)/L1(103,403)/L3(23,481)/Lai/T1/L4/C3/L5 —— lamina 单极/无长突通路;
+       T4  <- Mi1(420,119)/CT1/TmY15/Mi9/Tm3 —— ON 运动通路(medulla -> T4)的经典组合;
+       T5  <- Tm9(208,613)/Tm2(189,175)/CT1/TmY15/Tm1 —— OFF 运动通路(medulla -> T5)经典组合;
+       L1-L5 -> Tm2/Dm6/Mi1/Dm18/Dm19 —— lamina -> medulla 主干。
+       方向、索引映射、过滤口径三者同时得到解剖学确认。
+
+====================================================================================================
+10. 已知偏差 / 风险 / 给 B、C 线的提醒
+====================================================================================================
+
+1. **histamine 符号近似**:7,905 个组胺能细胞(含全部 R1-R6)的输出边被算作兴奋(W_exc),
+   因为契约的 INHIBITORY_NTS 只有 gaba/glycine/acetylcholine_gaba。若 B 线发现 lamina
+   层失控兴奋,优先怀疑这一条。
+2. **感光细胞无 somaSide**:6,098 个里只有 36 个有 L/R。左右视野分区不能用 side。
+3. **assignedOlHex1/2 覆盖率低**:只有 23,720 个 ol_intrinsic 有值(占 166,700 的 14.2%),
+   感光细胞自身没有。已放进 parquet,但 B 线不要假设人人都有。
+4. **body-stats 无体坐标**,npz 无 soma_pos。
+5. **R1-R6 是合并标注**:type 字面量就是 'R1-R6'(3,377 个),不是 6 个独立 type;
+   想做 6 通道 ON 通路需要自己按别的字段拆分(当前数据不支持),建议当作单通道处理。
+6. **type 有 NaN**:神经元子集里 type 缺失的用 flywireType 回填,仍缺失记 'unknown'。
+7. 一切以 ``superclass`` 为功能分类主字段,``class`` 只作补充(84% NaN)。
+
+####################################################################################################
+# 报告结束;总耗时 30.0s
+####################################################################################################

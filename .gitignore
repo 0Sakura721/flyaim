@@ -1,0 +1,18 @@
+# ---- 大文件与可再生产物(见 README「数据与工件」;大件走 GitHub Release) ----
+.cache/
+flyaim/data/build/connectome.npz
+flyaim/runs/**
+!flyaim/runs/**/
+!flyaim/runs/**/*.json
+!flyaim/runs/**/*.md
+
+# ---- Python ----
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+
+# ---- 系统/编辑器 ----
+Thumbs.db
+.DS_Store
+*.log

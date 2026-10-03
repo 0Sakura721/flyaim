@@ -1,0 +1,85 @@
+{
+  "metric": "hit_rate",
+  "alpha": 0.05,
+  "tests": {
+    "fly_vs_shuffle": {
+      "arm_a": "fly",
+      "arm_b": "shuffle",
+      "metric": "hit_rate",
+      "n_pairs": 10,
+      "mean_a": 0.00044444444444444447,
+      "mean_b": 0.0,
+      "mean_diff": 0.00044444444444444447,
+      "ci95": [
+        0.0,
+        0.0009999999999999998
+      ],
+      "cohens_dz": 0.5720775535473553,
+      "t_stat": 1.8090680674665818,
+      "p_value": 0.10388813106210176,
+      "significant": false,
+      "alpha": 0.05,
+      "verdict": "fly 与 shuffle 无显著差异 (p=0.1039, 配对差值均值=0.0004, 95%CI=[0.0000,0.0010])"
+    },
+    "fly_vs_pid": {
+      "arm_a": "fly",
+      "arm_b": "pid",
+      "metric": "hit_rate",
+      "n_pairs": 10,
+      "mean_a": 0.00044444444444444447,
+      "mean_b": 0.06333333333333332,
+      "mean_diff": -0.06288888888888888,
+      "ci95": [
+        -0.06555555555555555,
+        -0.060111111111111115
+      ],
+      "cohens_dz": -13.845663350559311,
+      "t_stat": -43.78383190368579,
+      "p_value": 8.447440627638253e-12,
+      "significant": true,
+      "alpha": 0.05,
+      "verdict": "fly 劣于 pid (p=0.0000, 差值=-0.0629, 95%CI=[-0.0656,-0.0601], dz=-13.846)"
+    },
+    "fly_vs_random": {
+      "arm_a": "fly",
+      "arm_b": "random",
+      "metric": "hit_rate",
+      "n_pairs": 10,
+      "mean_a": 0.00044444444444444447,
+      "mean_b": 0.00022222222222222223,
+      "mean_diff": 0.00022222222222222218,
+      "ci95": [
+        -0.00044444444444444447,
+        0.0008888888888888889
+      ],
+      "cohens_dz": 0.19364916731037082,
+      "t_stat": 0.6123724356957945,
+      "p_value": 0.5554454421055853,
+      "significant": false,
+      "alpha": 0.05,
+      "verdict": "fly 与 random 无显著差异 (p=0.5554, 配对差值均值=0.0002, 95%CI=[-0.0004,0.0009])"
+    }
+  },
+  "primary": {
+    "arm_a": "fly",
+    "arm_b": "shuffle",
+    "metric": "hit_rate",
+    "n_pairs": 10,
+    "mean_a": 0.00044444444444444447,
+    "mean_b": 0.0,
+    "mean_diff": 0.00044444444444444447,
+    "ci95": [
+      0.0,
+      0.0009999999999999998
+    ],
+    "cohens_dz": 0.5720775535473553,
+    "t_stat": 1.8090680674665818,
+    "p_value": 0.10388813106210176,
+    "significant": false,
+    "alpha": 0.05,
+    "verdict": "判定:【接线图无因果贡献】fly 相对零模型 shuffle 无显著优势 (p=0.1039)。",
+    "generic_verdict": "fly 与 shuffle 无显著差异 (p=0.1039, 配对差值均值=0.0004, 95%CI=[0.0000,0.0010])",
+    "comparison": "fly_vs_shuffle",
+    "preregistered": true
+  }
+}

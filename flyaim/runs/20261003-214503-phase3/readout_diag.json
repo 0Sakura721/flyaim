@@ -1,0 +1,13 @@
+{
+  "n_samples": 100,
+  "n_features": 1360,
+  "ridge_lambda": 10.0,
+  "r2": 0.9983945115913897,
+  "rmse": 0.028023395230763828,
+  "train_seeds": [
+    9000
+  ],
+  "feature_mean_abs": 21.150202849557743,
+  "feature_std_mean": 5.560509859799626,
+  "n_dead_features": 646
+}

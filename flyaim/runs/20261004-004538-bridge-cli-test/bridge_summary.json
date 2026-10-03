@@ -1,0 +1,36 @@
+{
+  "controller": "random",
+  "sink": "null",
+  "source": "arena",
+  "frames": 20,
+  "wall_s": 2.68,
+  "tick_hz": 7.46,
+  "latency_ms": {
+    "act_p50": 0.045,
+    "act_p95": 0.059,
+    "inject_p50": 0.084,
+    "tick_p50": 130.531,
+    "tick_p95": 188.594,
+    "capture_age_p50": 0.042,
+    "capture_age_p95": 0.131,
+    "grab_p50": -1.0
+  },
+  "counts_total": [
+    1037,
+    -268
+  ],
+  "n_hits_env": 0,
+  "telemetry": {},
+  "gain": {
+    "counts_per_360": 12000.0,
+    "speed_fraction_per_action": 0.021875,
+    "max_counts_per_tick": 600.0,
+    "invert_x": false,
+    "invert_y": false,
+    "deadzone": 0.0,
+    "counts_per_action": 262.5,
+    "deg_per_count": 0.03,
+    "deg_per_action": 7.875,
+    "semantics": "action=1.0 每拍扫过画面宽度的 speed_fraction_per_action 比例(与离线靶场 14px/640px 同语义);角度量经由 counts_per_360 折算。屏幕像素≈角度的线性近似与 tick 频率依赖见 gain.py docstring。"
+  }
+}

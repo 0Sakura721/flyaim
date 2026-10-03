@@ -1,0 +1,170 @@
+﻿FlyAim C-line selftest (arena / metrics / pid / random / shuffle)
+python: 3.12.14  cwd: D:\dsh\autoaim
+numpy: 2.3.5  scipy: 1.18.1
+
+==============================================================================
+== 1. contract signatures (CONTRACT.md 2.4) - must match verbatim
+==============================================================================
+  [PASS] Arena.__init__(self, cfg: 'ArenaConfig', seed: 'int') -> 'None'
+  [PASS] Arena.reset(self) -> 'np.ndarray'
+  [PASS] Arena.step(self, action: 'np.ndarray') -> 'StepResult'
+  [PASS] Arena.render exists (contract alias)
+  [PASS] Arena.render(self) -> 'np.ndarray'
+  [PASS] Arena.get_state(self) -> 'dict' (lead integration hook)
+  [PASS] StepResult fields = ['frame', 'hit', 'target_dist', 'done', 'info']
+  [PASS] Metrics.update(self, res) -> 'None'
+  [PASS] Metrics.summary(self) -> 'dict'
+  [PASS] Metrics() constructs with no arguments
+  [PASS] shuffle_connectome(art: 'ConnectomeArtifacts', seed: 'int', mode: 'str' = 'row') -> 'ConnectomeArtifacts' (2nd positional must be named seed)
+  [PASS] Arena.get_state() exposes 'crosshair' (PID reads it)
+  [PASS] Arena.get_state() exposes 'targets' (PID reads it)
+  [PASS] Arena.get_state() exposes 'width' (PID reads it)
+  [PASS] Arena.get_state() exposes 'height' (PID reads it)
+  [PASS] Arena.get_state() exposes 'speed_px_per_action' (PID reads it)
+
+==============================================================================
+== 2. determinism: same seed + same actions -> bit-identical frames
+==============================================================================
+  [PASS] bit-identical over 151 frames - default(single static target)
+  [PASS] bit-identical over 151 frames - moving target
+  [PASS] bit-identical over 151 frames - 3 targets + moving
+  [PASS] bit-identical over 151 frames - fast crosshair + small target
+  [PASS] Arena.reset() is idempotent (same seed -> same frame)
+  [PASS] different seeds give different initial scenes
+  [PASS] hit sequence reproducible for same seed
+
+==============================================================================
+== 3. PID (cheating upper bound) vs random (lower bound), 900 frames x 10 seeds, identical arena seeds/budget
+==============================================================================
+  arena: 640x480, radius=22px, n_targets=1, speed=14.0px/action, respawn_on_hit=True
+  --- arm 'pid' ---
+      seed= 0  hits= 56/900  hit_rate=0.0622  mean_dist= 165.52px  ttff=200.0
+      seed= 1  hits= 58/900  hit_rate=0.0644  mean_dist= 146.83px  ttff=433.3333333333333
+      seed= 2  hits= 56/900  hit_rate=0.0622  mean_dist= 158.60px  ttff=300.0
+      seed= 3  hits= 64/900  hit_rate=0.0711  mean_dist= 141.94px  ttff=533.3333333333334
+      seed= 4  hits= 56/900  hit_rate=0.0622  mean_dist= 151.00px  ttff=600.0
+      seed= 5  hits= 58/900  hit_rate=0.0644  mean_dist= 148.14px  ttff=400.0
+      seed= 6  hits= 48/900  hit_rate=0.0533  mean_dist= 184.99px  ttff=133.33333333333334
+      seed= 7  hits= 57/900  hit_rate=0.0633  mean_dist= 152.26px  ttff=366.6666666666667
+      seed= 8  hits= 60/900  hit_rate=0.0667  mean_dist= 145.69px  ttff=466.6666666666667
+      seed= 9  hits= 57/900  hit_rate=0.0633  mean_dist= 163.36px  ttff=500.0
+  --- arm 'random' ---
+      seed= 0  hits=  0/900  hit_rate=0.0000  mean_dist= 189.43px  ttff=None
+      seed= 1  hits=  0/900  hit_rate=0.0000  mean_dist= 151.56px  ttff=None
+      seed= 2  hits=  0/900  hit_rate=0.0000  mean_dist= 277.58px  ttff=None
+      seed= 3  hits=  0/900  hit_rate=0.0000  mean_dist= 249.59px  ttff=None
+      seed= 4  hits=  2/900  hit_rate=0.0022  mean_dist= 163.74px  ttff=19866.666666666668
+      seed= 5  hits=  0/900  hit_rate=0.0000  mean_dist= 347.12px  ttff=None
+      seed= 6  hits=  0/900  hit_rate=0.0000  mean_dist= 236.14px  ttff=None
+      seed= 7  hits=  0/900  hit_rate=0.0000  mean_dist= 234.96px  ttff=None
+      seed= 8  hits=  0/900  hit_rate=0.0000  mean_dist= 372.42px  ttff=None
+      seed= 9  hits=  0/900  hit_rate=0.0000  mean_dist= 294.38px  ttff=None
+  --- comparison (mean over seeds) ---
+      pid    : hit_rate=0.0633  hits/episode=57.0  (min 48, max 64)
+      random : hit_rate=0.0002  hits/episode=0.2  (min 0, max 2)
+      ratio  : pid/random = 285.0x
+  [PASS] PID hit_rate 0.0633 > 0.01 (aiming works)
+  [PASS] PID hit_rate >> random hit_rate (0.0633 vs 0.0002)
+  [PASS] every PID seed beats every random seed (0.0533 > 0.0022)
+  [PASS] PID is a meaningful upper-bound ruler (hit_rate > 2%)
+  [PASS] PIDBaseline.tune() returns valid gains (kp=1.0, kd=0.0)
+
+==============================================================================
+== 4. Metrics.summary() keys and internal consistency
+==============================================================================
+  [PASS] summary() contains all mandated keys ['hits', 'shots', 'hit_rate', 'mean_target_dist_px', 'time_to_first_hit_ms', 'frames', 'fps_loop', 'acq_curve']; missing=[]
+  [PASS] shots == frames == 120 (per-frame auto fire), got 120/120
+  [PASS] hit_rate == hits / shots
+  [PASS] acq_curve has n_bins=10 entries, got 10
+  [PASS] mean(acq_curve) == hit_rate (bins are a partition of the episode)
+  [PASS] fps_loop injected via set_fps -> 30.0
+  [PASS] time_to_first_hit_ms = 600.0
+  [PASS] mean_target_dist_px = 128.14
+  [PASS] add_extra() value is merged into summary()
+  [PASS] add_extra() rejects keys colliding with contract keys
+  [PASS] empty Metrics() summary is well-defined (frames=0, hit_rate=0)
+  [PASS] Metrics.update() only needs .hit/.target_dist (no info keys) - lead contract
+  [PASS] StepResult.done flips at max_frames
+
+==============================================================================
+== 5. shuffle null model: keep statistics, destroy topology
+==============================================================================
+  original: n=140, edges=2293 (exc=1699, inh=594), density=0.1170
+  --- mode='row' ---
+      row_nnz_equal=True  nnz_equal=True  data_equal=True  indptr_equal=True  rowsum_equal=True  indices_multiset_equal=True  indegree_distribution_equal=True  colsum_multiset_equal=False  topology_changed=True  mode_guess=row
+  [PASS] [row] per-row nnz identical row by row
+  [PASS] [row] total nnz identical (exc 1699, inh 594)
+  [PASS] [row] weight arrays byte-identical (weight distribution preserved)
+  [PASS] [row] topology actually changed (indices permuted)
+  [PASS] [row] inh topology actually changed
+  [PASS] [row] per-neuron out-weight sums exactly unchanged
+  [PASS] [row] column-index multiset unchanged (no edge created/destroyed)
+  [PASS] [row] neuron_ids / soma_pos carried over unchanged
+  [PASS] [row] weights are float32 CSR (passes __post_init__ checks)
+  [PASS] [row] verify_shuffle() -> all_invariants_ok=True
+  [PASS] [row] same seed -> identical permutation
+  [PASS] [row] different seed -> different permutation
+  [PASS] [row] CSR matvec finite (downstream LIF can use it)
+  [PASS] [row] has_sorted_indices flag is truthful (False)
+  --- mode='global' ---
+      row_nnz_equal=True  nnz_equal=True  data_equal=True  indptr_equal=True  rowsum_equal=True  indices_multiset_equal=False  indegree_distribution_equal=True  colsum_multiset_equal=True  topology_changed=True  mode_guess=global
+  [PASS] [global] per-row nnz identical row by row
+  [PASS] [global] total nnz identical (exc 1699, inh 594)
+  [PASS] [global] weight arrays byte-identical (weight distribution preserved)
+  [PASS] [global] topology actually changed (indices permuted)
+  [PASS] [global] inh topology actually changed
+  [PASS] [global] per-neuron out-weight sums exactly unchanged
+  [PASS] [global] in-degree distribution (multiset) exactly preserved
+  [PASS] [global] in-weight sum multiset exactly preserved
+      global mode: 125/140 neurons got a different in-degree (distribution preserved, assignment destroyed)
+  [PASS] [global] neuron_ids / soma_pos carried over unchanged
+  [PASS] [global] weights are float32 CSR (passes __post_init__ checks)
+  [PASS] [global] verify_shuffle() -> all_invariants_ok=True
+  [PASS] [global] same seed -> identical permutation
+  [PASS] [global] different seed -> different permutation
+  [PASS] [global] CSR matvec finite (downstream LIF can use it)
+  [PASS] [global] has_sorted_indices flag is truthful (False)
+  [PASS] shuffled artifact survives save()/load() round-trip (npz)
+  [PASS] input ConnectomeArtifacts is not modified in place (returns a new object)
+
+==============================================================================
+== 6b. retina visibility: is the target detectable at micro-eye resolution?
+==============================================================================
+      micro-eye grid: 24 x 32  (block 20 x 20 px)
+      single static target: background=18.5, target cell peak=130.8, delta=112.3 (0-255)
+  [PASS] target is clearly visible at micro-eye resolution (delta 112.3 > 40)
+      moving target (3 px/frame): max |delta| over 5 frames = 90.3, cells changed > 2 levels: 13
+  [PASS] moving target produces a temporal (motion) cue (90.3 > 3)
+      crosshair sweep (12 frames x 14 px): max |delta| = 24.4
+  [PASS] crosshair motion is visible (24.4 > 3)
+
+==============================================================================
+== 6. rendering: PNG on disk + luminance contrast for the retina
+==============================================================================
+  [PASS] frame is uint8 (H,W,3) = (480, 640, 3) uint8
+      luminance: bg=18.5, target=119.3, crosshair=240.0
+  [PASS] target vs background luminance contrast 100.9 > 60
+  [PASS] crosshair vs background luminance contrast 221.5 > 150
+  [PASS] frame contains >= 3 distinct colors (found 4)
+      wrote D:\dsh\autoaim\flyaim\arena\arena_render.png  (1286x1002, 10 KB)
+  [PASS] arena_render.png exists and is not empty
+
+==============================================================================
+== 7. curve PNGs (acq_curve + hit-rate comparison) for the Phase 3 report
+==============================================================================
+  [PASS] acq_curve.png written and decodable (52 KB)
+  [PASS] hit_rate_comparison.png written and decodable (30 KB)
+  [PASS] report_panel.png written and decodable (58 KB)
+
+==============================================================================
+== summary
+==============================================================================
+  ALL CHECKS PASSED (0 failures)
+
+  artifacts (absolute paths):
+    render montage : D:\dsh\autoaim\flyaim\arena\arena_render.png
+    curve figure   : D:\dsh\autoaim\flyaim\arena\acq_curve.png
+    curve figure   : D:\dsh\autoaim\flyaim\arena\hit_rate_comparison.png
+    curve figure   : D:\dsh\autoaim\flyaim\arena\report_panel.png
+  elapsed: 68.9s
+  tip: python flyaim/arena/selftest.py --seeds 10   # tighter error bars

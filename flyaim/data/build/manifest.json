@@ -1,0 +1,282 @@
+{
+  "dataset": "MaleCNS v1.0",
+  "license": "CC-BY-4.0",
+  "created_utc": "2026-10-03T10:51:51Z",
+  "n_neurons": 166700,
+  "n_edges": 25582938,
+  "roles": {
+    "n_visual_input": 6098,
+    "n_descending": 1360,
+    "n_motor": 708,
+    "n_inhibitory": 22122,
+    "visual_input_strategy": "superclass:ol_sensory",
+    "visual_input_fallback": false
+  },
+  "visual_input_fallback": false,
+  "visual_input_strategy": "superclass:ol_sensory",
+  "notes": [
+    "索引口径: N=166,700 = body-annotations(minconf 0.5) 中 superclass 非空的神经元行数;全量标注 211,577 行中排除 44,877 行(glia/unimportant/orphan 等无功能分类)。bodyId 升序 -> 全局索引 0..N-1。",
+    "weights 文件是**边表** (body_pre, body_post, weight),共 151,856,684 行;有向语义按契约 W[i,j]=j->i 落盘,即 row=body_post, col=body_pre。",
+    "边过滤: 丢弃 126,273,746 条(突触前不在索引集 4,802,752 / 突触后不在 112,633,588 / 两端都不在 8,837,406);保留 25,582,938 条。",
+    "一致性自检通过: W_exc.nnz(20,642,763) + W_inh.nnz(4,940,175) == 过滤后边数(25,582,938),无重复 (body_post,body_pre) 对。",
+    "边 vs 突触(重要): 本 npz 共 25,582,938 条**边**,权重合计 124,177,616 个**突触**,平均 4.85 突触/边。CONTRACT.md 里写的 '~1.25e8 突触连接' 指的是**突触总数**——实测 124,177,616 与之吻合,说明过滤后的 A-A 子图就是该数据集的完整神经元级连接组。",
+    "为什么 151,856,684 行只保留 25,582,938 条边(见 .cache/edge_partition.json): 74.05%(112,452,244)的行其 body_post **不是任何有标注的 body**。采样实测: body_pre 100% 落在 body 列表内(93.4% 在 annotations),而 body_post 有 87.9% 的行取值互不相同、78.6% 的取值既不在 annotations 也不在 body-neurotransmitters 的 1,835,518 个 body 里,且几乎从不作为 body_pre 出现。→ 上游'全量'文件把突触拆到了**未追踪的碎片对象**上;按契约的索引口径只保留两端都是 166,700 神经元的边,正是标准做法,且保留下了 39.8% 的突触质量。",
+    "生物学合理性验证(过滤后子图,非零断言): R1-R6 的输出 top 靶 = L2/L1/L3/L4/Lawf1/C3/C2/T1(教科书 lamina 通路);T4 的输入 = LPi34/LPi21/Tlp14/TmY4(ON 运动通路);T5 的输入 = LPi/Tlp/Am1/Y11(经典 OFF 运动通路);L1-L5 输出 = Tm1/Tm2/Tm4/Mi1/Dm;下行神经元 DN 的主要输出 = vnc_motor(Sternotrochanter MN / Tr flexor MN 等)+ 上行神经元。以上均符合已知视叶/VNC 解剖,说明方向约定 W[i,j]=j->i 与过滤口径都正确。",
+    "独立交叉验证(最强的正确性证据): GCS 桶里另有官方过滤版 connectome-weights-...-traced-only.feather(508,025,642 B;25,563,197 行;额外带 type_pre/type_post 列)。它 99.98% 的边两端都在本索引空间内,A-A 突触合计 124,009,893;本产物(全量文件挑 A-A)= 25,582,938 条边 / 124,177,616 突触,与官方神经元级连接组只差 24,267 条边(0.095%),是其超集。另用 traced-only 的 200,000 行子样本逐行比对 type_pre/type_post:body_pre / body_post 各有 100.00% 落在本索引空间内,且与 neuron_index.type **100.00% 一致** —— 索引空间、字段方向(pre=突触前/post=突触后)、annotation->index 映射三者同时得到官方文件确认。",
+    "连通性: 166,483/166,700 个神经元至少有一条出入边,孤立神经元仅 217 个;出权重中位数强度、入权重中位数见 extra.group_degree。",
+    "抑制性判定: 契约 INHIBITORY_NTS=gaba/glycine/acetylcholine_gaba;命中 22,122 个细胞;突触前属于该集合的边 -> W_inh(4,940,175 条 / 25,796,726 突触),其余 -> W_exc(20,642,763 条 / 98,380,888 突触)。递质取值分布={'acetylcholine': 104049, 'glutamate': 29622, 'gaba': 22122, 'histamine': 7905, 'unknown': 2100, 'dopamine': 395, 'serotonin': 375, 'octopamine': 132}",
+    "神经递质合并口径: 优先级 ground_truth > consensus_nt > predicted_nt(跳过 'unclear'/空/NaN),覆盖 164,600/166,700 个细胞(缺失 2,100 记为 'unknown');来源分布={'ground_truth': 85484, 'consensus_nt': 78039, 'none': 2100, 'predicted_nt': 1077};该优先级只决定 nt 标签,不改变任何一条边的归属。",
+    "已知偏差(重要,限制与偏差章节必须复述): 7,905 个细胞预测递质为 histamine,其中包含**全部 R1-R6 感光细胞**;而契约的 INHIBITORY_NTS 不含 histamine,因此 R1-R6 -> lamina 的输出边被归入 W_exc。生物学上组胺在 lamina 对 LMC 是抑制性的 —— 这是**已知符号近似**。预期后果: 视觉通路第一级极性反转、ON/OFF 对比度响应失真。本次不做干预(改判定规则会变成未经论证的方法学改动)。",
+    "视觉输入: strategy=superclass:ol_sensory, n=6,098, visual_input_fallback=False。数据集含真实复眼感光细胞(superclass=='ol_sensory'),无需人工替代群。",
+    "感光细胞可驱动性证据: 6,098 个 ol_sensory 中 6,012 个有出边,出权重合计 651,362(非零中位数 95/细胞),入权重合计 232,248 —— 说明它们真的接入了下游视叶回路,可作为 Retina 的输入靶点。",
+    "感光细胞的 somaSide 几乎全为 NaN(6,098 中仅 36 个有 L/R 标注),左右视野划分不能用 side;neuron_index.parquet 里已带 assignedOlHex1/2(视叶六边形坐标,仅 23,720 个 ol_intrinsic 有值,感光细胞自身没有),另有 vfbId / somaNeuromere / rootSide 可用。",
+    "body-stats 文件实测不含 soma x/y/z 坐标(列为 body/pre/post/status_fine/superclass/class/type/instance/downstream/synweight/rank),因此 connectome.npz 里没有 soma_pos。"
+  ],
+  "source_files": {
+    "annotations": {
+      "url": "https://storage.googleapis.com/flyem-male-cns/v1.0/connectome-data/flat-connectome/body-annotations-male-cns-v1.0-minconf-0.5.feather",
+      "bytes": 14483314,
+      "sha256": "2177e246113e4cfbf1e7772ec37c6da1955ff22e8063d0b1f833101f99a9a3b2"
+    },
+    "weights": {
+      "url": "https://storage.googleapis.com/flyem-male-cns/v1.0/connectome-data/flat-connectome/connectome-weights-male-cns-v1.0-minconf-0.5.feather",
+      "bytes": 1051241946,
+      "sha256": "e35da783d1c686b2b58b3b87cd6a403ae43bfcfba8bff28e08ef752c1a56afc1"
+    },
+    "neurotransmitters": {
+      "url": "https://storage.googleapis.com/flyem-male-cns/v1.0/connectome-data/flat-connectome/body-neurotransmitters-male-cns-v1.0.feather",
+      "bytes": 43282834,
+      "sha256": "95c9289220663abeb3409f3ad9e5a7f8a53f8093f5139d15502cd08da8879621"
+    },
+    "body_stats": {
+      "url": "https://storage.googleapis.com/flyem-male-cns/v1.0/connectome-data/flat-connectome/body-stats-male-cns-v1.0-minconf-0.5.feather",
+      "bytes": 778062826,
+      "sha256": "ca5dc83a26382ae70c8d8f42fc09ce2dbc1af7c03f3a001a1936b5e142540647"
+    }
+  },
+  "extra": {
+    "download_seconds": {
+      "annotations": 5.47,
+      "weights": 191.51,
+      "neurotransmitters": 13.33,
+      "body_stats": 138.05,
+      "weights_traced_only": 131.98
+    },
+    "download_attempts": {
+      "annotations": 1,
+      "weights": 1,
+      "neurotransmitters": 1,
+      "body_stats": 1,
+      "weights_traced_only": 1
+    },
+    "download_status": {
+      "annotations": "ok",
+      "weights": "ok",
+      "neurotransmitters": "ok",
+      "body_stats": "ok",
+      "weights_traced_only": "ok"
+    },
+    "peak_rss_mb": 1748.2,
+    "n_annotation_rows_total": 211577,
+    "n_annotation_rows_excluded_no_superclass": 44877,
+    "n_weights_rows_total": 151856684,
+    "n_edges_kept": 25582938,
+    "n_edges_dropped": 126273746,
+    "n_edges_dropped_pre_outside": 4802752,
+    "n_edges_dropped_post_outside": 112633588,
+    "n_edges_dropped_both_outside": 8837406,
+    "n_duplicate_pairs_collapsed": 0,
+    "weight_min": 1,
+    "weight_max": 2591,
+    "connectome_stats": {
+      "n_neurons": 166700,
+      "n_edges_exc": 20642763,
+      "n_edges_inh": 4940175,
+      "n_edges": 25582938,
+      "density": 0.0009206174841816279,
+      "has_soma_pos": false
+    },
+    "total_synapses": 124177616,
+    "mean_synapses_per_edge": 4.854,
+    "n_isolated_neurons": 217,
+    "n_neurons_with_out_edges": 165480,
+    "n_neurons_with_in_edges": 166330,
+    "out_weight_median_nonzero": 441.0,
+    "in_weight_median_nonzero": 347.0,
+    "edge_partition_abc": {
+      "A-A": 25582938,
+      "A-B": 181344,
+      "A-C": 112452244,
+      "B-A": 249969,
+      "B-B": 14135,
+      "B-C": 766887,
+      "C-A": 4552783,
+      "C-B": 78570,
+      "C-C": 7977814
+    },
+    "edge_partition_weight_sums": {
+      "A-A": 124177617,
+      "A-B": 476820,
+      "A-C": 170414577,
+      "B-A": 661930,
+      "B-B": 49566,
+      "B-C": 1131611,
+      "C-A": 5614376,
+      "C-B": 107066,
+      "C-C": 9199680
+    },
+    "cross_validation_traced_only": {
+      "file": "connectome-weights-male-cns-v1.0-minconf-0.5-traced-only.feather",
+      "url": "https://storage.googleapis.com/flyem-male-cns/v1.0/connectome-data/flat-connectome/connectome-weights-male-cns-v1.0-minconf-0.5-traced-only.feather",
+      "bytes": 508025642,
+      "sha256": "9b3beab17bad5f618be3f2c02d3139a8d07b822565919c013f1e5506d93e604b",
+      "rows": 25563197,
+      "columns": [
+        "body_pre",
+        "body_post",
+        "weight",
+        "type_pre",
+        "type_post"
+      ],
+      "n_edges_both_in_index": 25558671,
+      "synapses_both_in_index": 124009893,
+      "frac_rows_both_in_index": 0.9998,
+      "our_edges_minus_this": 24267,
+      "relative_diff": 0.000949,
+      "type_pre_type_post_match_rate": 1.0
+    },
+    "nt_coverage": 164600,
+    "nt_missing": 2100,
+    "group_degree": {
+      "ol_sensory": {
+        "n": 6098,
+        "n_with_out_edges": 6012,
+        "out_weight_total": 651362.0,
+        "out_weight_median_nonzero": 95.0,
+        "n_with_in_edges": 6018,
+        "in_weight_total": 232248.0,
+        "in_weight_median_nonzero": 14.0
+      },
+      "descending_neuron": {
+        "n": 1314,
+        "n_with_out_edges": 1314,
+        "out_weight_total": 4092559.0,
+        "out_weight_median_nonzero": 2319.0,
+        "n_with_in_edges": 1314,
+        "in_weight_total": 4582510.0,
+        "in_weight_median_nonzero": 2007.5
+      },
+      "vnc_motor": {
+        "n": 708,
+        "n_with_out_edges": 676,
+        "out_weight_total": 29903.0,
+        "out_weight_median_nonzero": 15.0,
+        "n_with_in_edges": 708,
+        "in_weight_total": 2671789.0,
+        "in_weight_median_nonzero": 2620.0
+      },
+      "ol_intrinsic": {
+        "n": 89403,
+        "n_with_out_edges": 88566,
+        "out_weight_total": 43984760.0,
+        "out_weight_median_nonzero": 358.0,
+        "n_with_in_edges": 89395,
+        "in_weight_total": 39066720.0,
+        "in_weight_median_nonzero": 276.0
+      },
+      "visual_projection": {
+        "n": 9201,
+        "n_with_out_edges": 9200,
+        "out_weight_total": 7354973.0,
+        "out_weight_median_nonzero": 601.0,
+        "n_with_in_edges": 9200,
+        "in_weight_total": 10517103.0,
+        "in_weight_median_nonzero": 737.0
+      }
+    },
+    "nt_available": true,
+    "nt_hist": {
+      "acetylcholine": 104049,
+      "glutamate": 29622,
+      "gaba": 22122,
+      "histamine": 7905,
+      "unknown": 2100,
+      "dopamine": 395,
+      "serotonin": 375,
+      "octopamine": 132
+    },
+    "nt_source_hist": {
+      "ground_truth": 85484,
+      "consensus_nt": 78039,
+      "none": 2100,
+      "predicted_nt": 1077
+    },
+    "roles_notes": [
+      "下行神经元: superclass=1314, class='descending'=0, type前缀DN=1342, 取并集=1360"
+    ],
+    "index_columns": [
+      "body_id",
+      "name",
+      "class",
+      "superclass",
+      "type",
+      "side",
+      "nt",
+      "flywireType",
+      "hemibrainType",
+      "subclass",
+      "statusLabel",
+      "vfbId",
+      "somaNeuromere",
+      "rootSide",
+      "nt_source",
+      "nt_confidence",
+      "assignedOlHex1",
+      "assignedOlHex2"
+    ],
+    "index_rows": 166700,
+    "has_soma_pos": false,
+    "schema_facts": {
+      "annotations_rows": 211577,
+      "annotations_cols": 36,
+      "neurons_with_superclass": 166700,
+      "neurons_with_vfbId": 166686,
+      "weights_rows": 151856684,
+      "weights_batches": 2318,
+      "weights_columns": [
+        "body_pre",
+        "body_post",
+        "weight"
+      ],
+      "nt_file_rows": 1835518,
+      "nt_file_cols": 10,
+      "body_stats_rows": 88384522,
+      "photoreceptors_present": true,
+      "photoreceptor_types": [
+        "R1-R6",
+        "R7y",
+        "R8y",
+        "R8_unclear",
+        "R7_unclear",
+        "R7p",
+        "R8p",
+        "R7R8_unclear",
+        "R7d",
+        "R8d"
+      ]
+    },
+    "artifacts": {
+      "neuron_index.parquet": 5083256,
+      "connectome.npz": 207332760,
+      "roles.json": 375254
+    },
+    "artifact_paths": {
+      "neuron_index": "D:\\dsh\\autoaim\\flyaim\\data\\build\\neuron_index.parquet",
+      "connectome": "D:\\dsh\\autoaim\\flyaim\\data\\build\\connectome.npz",
+      "roles": "D:\\dsh\\autoaim\\flyaim\\data\\build\\roles.json",
+      "manifest": "D:\\dsh\\autoaim\\flyaim\\data\\build\\manifest.json",
+      "schema_probe": "D:\\dsh\\autoaim\\flyaim\\data\\build\\schema_probe.txt",
+      "verify": "D:\\dsh\\autoaim\\flyaim\\data\\verify.py"
+    }
+  }
+}

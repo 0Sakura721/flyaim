@@ -1,0 +1,496 @@
+{
+  "config": {
+    "seeds": [
+      0,
+      1
+    ],
+    "frames_per_episode": 80,
+    "arms": [
+      "fly",
+      "shuffle",
+      "pid",
+      "random"
+    ],
+    "arena": {
+      "width": 640,
+      "height": 480,
+      "target_radius": 22,
+      "n_targets": 1,
+      "target_speed_px_per_frame": 0.0,
+      "crosshair_radius": 4,
+      "speed_px_per_action": 14.0,
+      "max_frames": 80,
+      "respawn_on_hit": true,
+      "start_centered": true,
+      "bg_color": [
+        18,
+        18,
+        22
+      ],
+      "target_color": [
+        235,
+        70,
+        70
+      ],
+      "crosshair_color": [
+        240,
+        240,
+        240
+      ]
+    },
+    "retina": {
+      "eye_rows": 24,
+      "eye_cols": 32,
+      "use_on_off": true,
+      "lateral_inhibition": 0.25,
+      "temporal_diff": 0.7,
+      "encoding": "rate",
+      "max_drive_hz": 200.0,
+      "luminance_weights": [
+        0.299,
+        0.587,
+        0.114
+      ]
+    },
+    "brain": {
+      "dt_ms": 1.0,
+      "tau_m_ms": 20.0,
+      "v_rest": 0.0,
+      "v_thresh": 1.0,
+      "v_reset": 0.0,
+      "refractory_ms": 2.0,
+      "weight_scale_exc": 16.0,
+      "weight_scale_inh": 16.0,
+      "input_gain": 1.5,
+      "steps_per_frame": 33,
+      "subnet_size": null,
+      "subnet_seed": 0,
+      "dtype": "float32",
+      "use_neuromodulation": false
+    },
+    "readout": {
+      "mode": "trained",
+      "source": "dn",
+      "gain": 1.0,
+      "smoothing": 0.5,
+      "train_seeds": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "eval_seeds": [
+        100,
+        101,
+        102,
+        103,
+        104
+      ],
+      "ridge_lambda": 10.0,
+      "weights_path": null
+    },
+    "data_dir": "flyaim/data/build",
+    "out_dir": "flyaim/runs"
+  },
+  "results": {
+    "fly": [
+      {
+        "arm": "fly",
+        "seed": 0,
+        "wall_s": 24.640299300008337,
+        "frames": 80,
+        "summary": {
+          "hits": 0,
+          "shots": 80,
+          "hit_rate": 0.0,
+          "mean_target_dist_px": 83.81781818641602,
+          "time_to_first_hit_ms": null,
+          "frames": 80,
+          "fps_loop": 3.246713809193581,
+          "acq_curve": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "n_bins": 10,
+          "acq_curve_counts": [
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8
+          ],
+          "frames_budget": null,
+          "mean_target_dist_std_px": 22.05499901243822,
+          "min_target_dist_px": 39.76676964820672,
+          "mean_target_dist_at_hit_px": 0.0,
+          "time_to_first_hit_frames": null,
+          "done": true,
+          "first_half_hit_rate": 0.0,
+          "second_half_hit_rate": 0.0
+        }
+      },
+      {
+        "arm": "fly",
+        "seed": 1,
+        "wall_s": 21.65931879999698,
+        "frames": 80,
+        "summary": {
+          "hits": 0,
+          "shots": 80,
+          "hit_rate": 0.0,
+          "mean_target_dist_px": 247.2043040840661,
+          "time_to_first_hit_ms": null,
+          "frames": 80,
+          "fps_loop": 3.6935602979356466,
+          "acq_curve": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "n_bins": 10,
+          "acq_curve_counts": [
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8
+          ],
+          "frames_budget": null,
+          "mean_target_dist_std_px": 23.030545823937146,
+          "min_target_dist_px": 202.31390679067854,
+          "mean_target_dist_at_hit_px": 0.0,
+          "time_to_first_hit_frames": null,
+          "done": true,
+          "first_half_hit_rate": 0.0,
+          "second_half_hit_rate": 0.0
+        }
+      }
+    ],
+    "shuffle": [
+      {
+        "arm": "shuffle",
+        "seed": 0,
+        "wall_s": 12.838862699994934,
+        "frames": 80,
+        "summary": {
+          "hits": 0,
+          "shots": 80,
+          "hit_rate": 0.0,
+          "mean_target_dist_px": 349.3317856340403,
+          "time_to_first_hit_ms": null,
+          "frames": 80,
+          "fps_loop": 6.231081511607066,
+          "acq_curve": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "n_bins": 10,
+          "acq_curve_counts": [
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8
+          ],
+          "frames_budget": null,
+          "mean_target_dist_std_px": 104.30645791752842,
+          "min_target_dist_px": 121.42080467937292,
+          "mean_target_dist_at_hit_px": 0.0,
+          "time_to_first_hit_frames": null,
+          "done": true,
+          "first_half_hit_rate": 0.0,
+          "second_half_hit_rate": 0.0
+        }
+      },
+      {
+        "arm": "shuffle",
+        "seed": 1,
+        "wall_s": 16.03079040000739,
+        "frames": 80,
+        "summary": {
+          "hits": 0,
+          "shots": 80,
+          "hit_rate": 0.0,
+          "mean_target_dist_px": 455.0260251352796,
+          "time_to_first_hit_ms": null,
+          "frames": 80,
+          "fps_loop": 4.99039648100964,
+          "acq_curve": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "n_bins": 10,
+          "acq_curve_counts": [
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8
+          ],
+          "frames_budget": null,
+          "mean_target_dist_std_px": 114.0776678831179,
+          "min_target_dist_px": 200.04233014226804,
+          "mean_target_dist_at_hit_px": 0.0,
+          "time_to_first_hit_frames": null,
+          "done": true,
+          "first_half_hit_rate": 0.0,
+          "second_half_hit_rate": 0.0
+        }
+      }
+    ],
+    "pid": [
+      {
+        "arm": "pid",
+        "seed": 0,
+        "wall_s": 0.13735940000333358,
+        "frames": 80,
+        "summary": {
+          "hits": 5,
+          "shots": 80,
+          "hit_rate": 0.0625,
+          "mean_target_dist_px": 204.6451106572124,
+          "time_to_first_hit_ms": 10.301955000250016,
+          "frames": 80,
+          "fps_loop": 582.4137263125675,
+          "acq_curve": [
+            0.125,
+            0.0,
+            0.0,
+            0.125,
+            0.0,
+            0.0,
+            0.0,
+            0.125,
+            0.125,
+            0.125
+          ],
+          "n_bins": 10,
+          "acq_curve_counts": [
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8
+          ],
+          "frames_budget": null,
+          "mean_target_dist_std_px": 153.08407687164623,
+          "min_target_dist_px": 8.652430537573725,
+          "mean_target_dist_at_hit_px": 14.743496739489832,
+          "time_to_first_hit_frames": 5,
+          "done": true,
+          "first_half_hit_rate": 0.05,
+          "second_half_hit_rate": 0.075
+        }
+      },
+      {
+        "arm": "pid",
+        "seed": 1,
+        "wall_s": 0.14955889999691863,
+        "frames": 80,
+        "summary": {
+          "hits": 5,
+          "shots": 80,
+          "hit_rate": 0.0625,
+          "mean_target_dist_px": 123.89133802776742,
+          "time_to_first_hit_ms": 24.30332124949928,
+          "frames": 80,
+          "fps_loop": 534.9063145132001,
+          "acq_curve": [
+            0.0,
+            0.125,
+            0.0,
+            0.125,
+            0.0,
+            0.125,
+            0.0,
+            0.125,
+            0.0,
+            0.125
+          ],
+          "n_bins": 10,
+          "acq_curve_counts": [
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8
+          ],
+          "frames_budget": null,
+          "mean_target_dist_std_px": 70.78229826293604,
+          "min_target_dist_px": 8.023724461404226,
+          "mean_target_dist_at_hit_px": 12.379059350574172,
+          "time_to_first_hit_frames": 12,
+          "done": true,
+          "first_half_hit_rate": 0.05,
+          "second_half_hit_rate": 0.075
+        }
+      }
+    ],
+    "random": [
+      {
+        "arm": "random",
+        "seed": 0,
+        "wall_s": 0.12472219999472145,
+        "frames": 80,
+        "summary": {
+          "hits": 0,
+          "shots": 80,
+          "hit_rate": 0.0,
+          "mean_target_dist_px": 130.772208660743,
+          "time_to_first_hit_ms": null,
+          "frames": 80,
+          "fps_loop": 641.4255040673256,
+          "acq_curve": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "n_bins": 10,
+          "acq_curve_counts": [
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8
+          ],
+          "frames_budget": null,
+          "mean_target_dist_std_px": 40.33487282550865,
+          "min_target_dist_px": 70.81022428561015,
+          "mean_target_dist_at_hit_px": 0.0,
+          "time_to_first_hit_frames": null,
+          "done": true,
+          "first_half_hit_rate": 0.0,
+          "second_half_hit_rate": 0.0
+        }
+      },
+      {
+        "arm": "random",
+        "seed": 1,
+        "wall_s": 0.1351113999990048,
+        "frames": 80,
+        "summary": {
+          "hits": 0,
+          "shots": 80,
+          "hit_rate": 0.0,
+          "mean_target_dist_px": 183.87808330204783,
+          "time_to_first_hit_ms": null,
+          "frames": 80,
+          "fps_loop": 592.1039971504201,
+          "acq_curve": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "n_bins": 10,
+          "acq_curve_counts": [
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8
+          ],
+          "frames_budget": null,
+          "mean_target_dist_std_px": 29.441687858498387,
+          "min_target_dist_px": 128.8349146446727,
+          "mean_target_dist_at_hit_px": 0.0,
+          "time_to_first_hit_frames": null,
+          "done": true,
+          "first_half_hit_rate": 0.0,
+          "second_half_hit_rate": 0.0
+        }
+      }
+    ]
+  },
+  "timings": {
+    "fly": 47.42286700000113,
+    "shuffle": 29.913057099998696,
+    "pid": 0.29394020000472665,
+    "random": 0.2673953000048641
+  }
+}

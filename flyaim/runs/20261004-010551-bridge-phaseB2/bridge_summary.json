@@ -1,0 +1,42 @@
+{
+  "controller": "seek(plumbing)",
+  "sink": "null",
+  "source": "screen",
+  "frames": 300,
+  "wall_s": 54.74,
+  "tick_hz": 5.48,
+  "latency_ms": {
+    "act_p50": 16.762,
+    "act_p95": 22.674,
+    "inject_p50": 0.056,
+    "tick_p50": 190.285,
+    "tick_p95": 287.042,
+    "capture_age_p50": 0.874,
+    "capture_age_p95": 3.408,
+    "grab_p50": 49.216
+  },
+  "counts_total": [
+    -20992,
+    8097
+  ],
+  "n_hits_env": 0,
+  "telemetry": {
+    "frames": 300,
+    "jsonl": "D:\\dsh\\autoaim\\flyaim\\runs\\20261004-010551-bridge-phaseB2\\live\\telemetry.jsonl",
+    "bytes": 227144,
+    "previews": 60
+  },
+  "gain": {
+    "counts_per_360": 12000.0,
+    "speed_fraction_per_action": 0.021875,
+    "max_counts_per_tick": 600.0,
+    "invert_x": false,
+    "invert_y": false,
+    "deadzone": 0.0,
+    "counts_per_action": 262.5,
+    "deg_per_count": 0.03,
+    "deg_per_action": 7.875,
+    "semantics": "action=1.0 每拍扫过画面宽度的 speed_fraction_per_action 比例(与离线靶场 14px/640px 同语义);角度量经由 counts_per_360 折算。屏幕像素≈角度的线性近似与 tick 频率依赖见 gain.py docstring。"
+  },
+  "pointer_accel_enabled": true
+}

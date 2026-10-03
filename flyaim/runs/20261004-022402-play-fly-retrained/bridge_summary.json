@@ -1,0 +1,45 @@
+{
+  "controller": "trigger",
+  "sink": "sendinput",
+  "source": "screen",
+  "frames": 478,
+  "wall_s": 40.03,
+  "tick_hz": 11.94,
+  "latency_ms": {
+    "act_p50": 74.892,
+    "act_p95": 90.21,
+    "inject_p50": 0.368,
+    "tick_p50": 78.777,
+    "tick_p95": 132.887,
+    "capture_age_p50": 50.62,
+    "capture_age_p95": 74.798,
+    "grab_p50": 1.768
+  },
+  "counts_total": [
+    -894,
+    -152
+  ],
+  "n_hits_env": 0,
+  "focus_losses": 0,
+  "telemetry": {
+    "frames": 478,
+    "jsonl": "D:\\dsh\\autoaim\\flyaim\\runs\\20261004-022402-play-fly-retrained\\live\\telemetry.jsonl",
+    "bytes": 13793642,
+    "previews": 24
+  },
+  "gain": {
+    "counts_per_360": 3400.0,
+    "speed_fraction_per_action": 0.021875,
+    "max_counts_per_tick": 400.0,
+    "invert_x": false,
+    "invert_y": false,
+    "deadzone": 0.0,
+    "counts_per_action": 74.38,
+    "deg_per_count": 0.105882,
+    "deg_per_action": 7.875,
+    "semantics": "action=1.0 每拍扫过画面宽度的 speed_fraction_per_action 比例(与离线靶场 14px/640px 同语义);角度量经由 counts_per_360 折算。屏幕像素≈角度的线性近似与 tick 频率依赖见 gain.py docstring。"
+  },
+  "mode": "fly",
+  "n_fires": 0,
+  "n_hits_inferred": 0
+}

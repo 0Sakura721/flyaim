@@ -1,0 +1,6 @@
+{
+  "metric": "hit_rate",
+  "alpha": 0.05,
+  "tests": {},
+  "primary": null
+}

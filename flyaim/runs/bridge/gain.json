@@ -1,0 +1,12 @@
+{
+  "counts_per_360": 27400.0,
+  "speed_fraction_per_action": 0.021875,
+  "max_counts_per_tick": 400.0,
+  "invert_x": false,
+  "invert_y": false,
+  "deadzone": 0.0,
+  "calibration": {
+    "method": "blob-median + hybrid authority compensation",
+    "note": "counts_per_action ~600;按工作速度实测 ppc 反推(EPP 慢速衰减:0.021-0.054 px/计@600c/s vs 0.15-0.28@3750c/s)"
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "controller": "fly",
+  "sink": "null",
+  "source": "screen",
+  "frames": 100,
+  "wall_s": 5.7,
+  "tick_hz": 17.56,
+  "latency_ms": {
+    "act_p50": 47.946,
+    "act_p95": 57.157,
+    "inject_p50": 0.084,
+    "tick_p50": 50.827,
+    "tick_p95": 67.437,
+    "capture_age_p50": 45.977,
+    "capture_age_p95": 64.0,
+    "grab_p50": 1.756
+  },
+  "counts_total": [
+    -25217,
+    -24880
+  ],
+  "n_hits_env": 0,
+  "telemetry": {
+    "frames": 100,
+    "jsonl": "D:\\dsh\\autoaim\\flyaim\\runs\\20261004-012305-bridge-fly-live\\live\\telemetry.jsonl",
+    "bytes": 2990128,
+    "previews": 5
+  },
+  "gain": {
+    "counts_per_360": 12000.0,
+    "speed_fraction_per_action": 0.021875,
+    "max_counts_per_tick": 600.0,
+    "invert_x": false,
+    "invert_y": false,
+    "deadzone": 0.0,
+    "counts_per_action": 262.5,
+    "deg_per_count": 0.03,
+    "deg_per_action": 7.875,
+    "semantics": "action=1.0 每拍扫过画面宽度的 speed_fraction_per_action 比例(与离线靶场 14px/640px 同语义);角度量经由 counts_per_360 折算。屏幕像素≈角度的线性近似与 tick 频率依赖见 gain.py docstring。"
+  },
+  "pointer_accel_enabled": true
+}

@@ -1,0 +1,367 @@
+"""桥接控制器:接在 FrameSource 与 GainModel 之间的决策体。
+
+===============================================================================
+协议
+===============================================================================
+controller.act(frame) -> (2,) float32,归一化到 [-1,1](与 runner.Arm 同约定,
+但输入只有帧,没有 state —— 桥接层里没人能拿到"环境状态")。
+
+可选属性:
+    .name        str,遥测/报告用
+    .brain       有 .spikes/.rates 属性的引擎(FlyController 才有),供遥测热图
+    .blind       bool,该控制器是否保证只看像素(遥测侧须据此决定能否用检测)
+
+诚实声明:SeekController 是**管道校验臂**
+    它用 detect.find_target 的像素误差做 PD 控制,本质是「偷看答案的经典
+    控制器」。它的用途只有一个:在接入真实鼠标/真实屏幕前,验证
+    捕获->决策->注入整条链路的时序与方向正确性。它**不是**实验对照臂,
+    不能出现在任何判定里(判定规则冻结在 CONTRACT.md 第 3 节)。
+"""
+
+from __future__ import annotations
+
+import logging
+
+import numpy as np
+
+from flyaim.bridge.detect import Detection, find_target, find_targets
+from flyaim.config import RetinaConfig
+
+logger = logging.getLogger(__name__)
+
+
+class FlyController:
+    """真实链路:Retina -> Connectome -> Readout。与离线实验唯一合法的果蝇臂同源。
+
+    system: flyaim.pipeline.FlySystem(装配参数必须与正式实验一致:
+    indeg 工作点 + trained 读出权重,见 tools/aimlab_bridge.py 的装配函数)。
+    """
+
+    name = "fly"
+    blind = True  # FlySystem 只收帧;架构级保证见 pipeline.FlyArm
+
+    def __init__(self, system) -> None:
+        self.system = system
+        self.last_act_ms = 0.0
+
+    @property
+    def brain(self):
+        return self.system.brain
+
+    def act(self, frame: np.ndarray) -> np.ndarray:
+        import time as _t
+
+        t0 = _t.perf_counter()
+        a = np.asarray(self.system.act(frame), dtype=np.float32).reshape(2)
+        self.last_act_ms = (_t.perf_counter() - t0) * 1000.0
+        return a
+
+    def reset(self) -> None:
+        self.system.reset()
+
+    def close(self) -> None:
+        pass
+
+
+class SeekController:
+    """纯视觉 PD 管道校验臂:像素误差 -> 归一化 action(见模块 docstring)。
+
+    瞄准点(aim point)的确定:
+        use_aim_detect=True 时检测帧内的**准星标记**(默认白色)作为瞄准点;
+        检测不到则回退画面中心。为什么不用画面中心:
+        - 2D 靶场彩排里,准星移动不改变靶的屏幕位置,若以画面中心为瞄准点,
+          误差信号与准星位置脱钩,PD 会一直朝同一边推(实测:准星贴墙振荡);
+        - 真实 FPS 里捕获区域若不完全居中,画面中心 ≠ 准星,同样会引入恒定
+          偏置误差。检测真实准星标记对两种场景都更正确。
+        注意 Aim Lab 里白色 UI 文字可能干扰准星检测 —— 用 preview 帧目检。
+
+    kp:每「半屏误差」输出多少 action;kd:对上帧误差变化的阻尼。
+    未检出靶时输出 0(静止),并记 not_found 计数。
+    """
+
+    name = "seek(plumbing)"
+    blind = False  # 依赖检测器(观测者侧信息),不可当实验臂
+
+    def __init__(self, ref_color=(70, 170, 255), tolerance: float = 60.0,
+                 kp: float = 1.2, kd: float = 0.15,
+                 aim_color=(240, 240, 240), aim_tolerance: float = 50.0,
+                 use_aim_detect: bool = True, lock: bool = True) -> None:
+        self.ref_color = tuple(ref_color)
+        self.tolerance = float(tolerance)
+        self.kp = float(kp)
+        self.kd = float(kd)
+        self.aim_color = tuple(aim_color)
+        self.aim_tolerance = float(aim_tolerance)
+        self.use_aim_detect = bool(use_aim_detect)
+        self.lock = bool(lock)  # 目标锁定:治"两目标间摇摆"(2026-10-04 用户观察)
+        self._locked_xy: tuple[float, float] | None = None
+        self._prev_err = np.zeros(2, dtype=np.float32)
+        self.last_detection: Detection | None = None
+        self.aim_detection: Detection | None = None
+        self.n_not_found = 0
+
+    def act(self, frame: np.ndarray) -> np.ndarray:
+        h, w = frame.shape[:2]
+        if self.lock:
+            cands = find_targets(frame, ref_color=self.ref_color,
+                                 tolerance=self.tolerance)
+            if not cands:
+                self._locked_xy = None
+                det = Detection(ok=False)
+            else:
+                if self._locked_xy is not None:
+                    det = min(cands, key=lambda d: (d.cx - self._locked_xy[0]) ** 2
+                              + (d.cy - self._locked_xy[1]) ** 2)
+                else:
+                    det = cands[0]  # 默认最大块
+                self._locked_xy = (det.cx, det.cy)
+            self.last_detection = det
+        else:
+            det = find_target(frame, ref_color=self.ref_color, tolerance=self.tolerance)
+            self.last_detection = det
+        if not det.ok:
+            self.n_not_found += 1
+            self._prev_err = np.zeros(2, dtype=np.float32)
+            return np.zeros(2, dtype=np.float32)
+        aim = None
+        if self.use_aim_detect:
+            aim = find_target(frame, ref_color=self.aim_color,
+                              tolerance=self.aim_tolerance, min_area_px=4)
+        self.aim_detection = aim
+        if aim is not None and aim.ok:
+            ax, ay = aim.cx, aim.cy
+        else:  # 回退:画面中心
+            ax, ay = (w - 1) / 2.0, (h - 1) / 2.0
+        err = np.array([det.cx - ax, det.cy - ay], dtype=np.float32)
+        a = self.kp * err / (w / 2.0) - self.kd * (err - self._prev_err) / (w / 2.0)
+        self._prev_err = err
+        return np.clip(a, -1.0, 1.0).astype(np.float32)
+
+    def reset(self) -> None:
+        self._prev_err = np.zeros(2, dtype=np.float32)
+        self._locked_xy = None
+        self.n_not_found = 0
+
+    def close(self) -> None:
+        pass
+
+
+class RandomController:
+    """均匀随机(离线实验的随机臂,用于桥接层空转对照)。"""
+
+    name = "random"
+    blind = True
+
+    def __init__(self, seed: int = 0) -> None:
+        self.rng = np.random.default_rng(seed)
+
+    def act(self, frame: np.ndarray) -> np.ndarray:
+        del frame
+        return self.rng.uniform(-1.0, 1.0, size=2).astype(np.float32)
+
+    def reset(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+class ZeroController:
+    """恒零(纯冻结:验证捕获与遥测在无动作时也正常)。"""
+
+    name = "zero"
+    blind = True
+
+    def act(self, frame: np.ndarray) -> np.ndarray:
+        del frame
+        return np.zeros(2, dtype=np.float32)
+
+    def reset(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+class HybridController:
+    """果蝇 + 视觉伺服混合:action = α·seek + (1-α)·fly。
+
+    **诚实声明(这不是"果蝇会瞄准了")**:瞄准由 seek(经典视觉 PD,
+    偷看检测结果)承担;果蝇网络以权重 (1-α) 真实叠加在控制回路里,
+    其以权重 β 加性地叠加在 seek 输出上(α 稀释版实测会把均衡点附近的
+    矫正力稀释到无法收敛:准星停在离靶 21px 处 55 秒进不了 10px 触发圈)。
+    果蝇的因果贡献用 β 消融量化:β=0(纯 seek)vs β=0.25 的命中数与
+    轨迹偏差差,就是"接上连接组后行为变了多少"的测量。
+
+    为什么需要它:CONTRACT 冻结连接组、学习只允许在读出层,而两轮域内
+    实验(离线 D11 + 游戏域 holdout r²=-0.67)一致表明 DN 群不编码
+    目标方向 —— 果蝇独立瞄准在该架构下不可达。混合器让"果蝇在回路里"
+    与"可交付的瞄准行为"同时成立,且不掩盖任何一方。
+    """
+
+    name = "hybrid"
+    blind = False  # seek 部分用检测
+
+    def __init__(self, fly_controller, beta: float = 0.25,
+                 ref_color=(48, 224, 224), tolerance: float = 60.0,
+                 fly_every: int = 2, kp: float = 2.2) -> None:
+        self.fly = fly_controller
+        self.seek = SeekController(ref_color=ref_color, tolerance=tolerance,
+                                   use_aim_detect=False, kp=kp)
+        self.fly_every = max(1, int(fly_every))  # 果蝇每 N 拍步进一次(扰动不需高频)
+        self._tick = 0
+        # β = 果蝇扰动权重:a = seek + β·fly。seek 不稀释(保住已验证的收敛),
+        # 果蝇作为加性扰动真实进入控制回路;贡献 = 有/无扰动的命中差(消融)。
+        self.beta = float(np.clip(beta, 0.0, 1.0))
+        self.last_fly = np.zeros(2, dtype=np.float32)
+        self.last_seek = np.zeros(2, dtype=np.float32)
+
+    @property
+    def brain(self):
+        return self.fly.brain
+
+    def act(self, frame: np.ndarray) -> np.ndarray:
+        if self._tick % self.fly_every == 0:
+            self._last_fly_out = np.asarray(self.fly.act(frame), dtype=np.float32).reshape(2)
+        self._tick += 1
+        a_fly = self._last_fly_out
+        a_seek = np.asarray(self.seek.act(frame), dtype=np.float32).reshape(2)
+        self.last_fly, self.last_seek = a_fly, a_seek
+        self.last_detection = self.seek.last_detection  # 供 TriggerOnTarget 复用
+        a = a_seek + self.beta * a_fly
+        return np.clip(a, -1.0, 1.0).astype(np.float32)
+
+    def reset(self) -> None:
+        self.fly.reset()
+        self.seek.reset()
+
+    def close(self) -> None:
+        self.fly.close()
+
+
+def make_retina_probe_config() -> RetinaConfig:
+    """返回默认视网膜配置(桥接层不改视网膜参数;留作显式入口以便未来调)。"""
+    return RetinaConfig()
+
+
+class TriggerOnTarget:
+    """自动开火层:准星压住靶时左键点击 —— 靶场「每帧自动开火」的游戏版。
+
+    **边界声明(与 CONTRACT 一致)**:arena 的设计是把"何时开火"从控制问题
+    里拿掉(每帧自动判定)。游戏里对应的语义就是:几何上准星与靶重叠即点击。
+    开火是环境层的固定规则,**不是网络的输出**;被测的永远只是瞄准。
+
+    包装任意 controller(seek / fly);靶位来自 detect.find_target(观测者侧),
+    只进开火判定与遥测。click_fn 由调用方注入(通常是 SendInputSink.click)。
+
+    命中推断:Gridshot 里"准星在靶盘内点击 = 必命中"(hitscan 无散布),
+    所以 err <= radius*err_frac 的点击直接计为 inferred hit。
+    """
+
+    name = "trigger"
+    blind = False  # 用了检测(仅开火层);内层 controller 保持自己的 blind 属性
+
+    def __init__(self, inner, click_fn, ref_color=(48, 224, 224), tolerance: float = 60.0,
+                 err_frac: float = 0.9, cooldown_s: float = 0.22) -> None:
+        self.inner = inner
+        self.click_fn = click_fn
+        self.ref_color = tuple(ref_color)
+        self.tolerance = float(tolerance)
+        self.err_frac = float(err_frac)
+        self.cooldown_s = float(cooldown_s)
+        self._last_fire = -1e9
+        self.n_fires = 0
+        self.n_hits_inferred = 0
+        self.last_detection: Detection | None = None
+
+    @property
+    def brain(self):
+        return getattr(self.inner, "brain", None)
+
+    def act(self, frame: np.ndarray) -> np.ndarray:
+        import time as _t
+
+        a = np.asarray(self.inner.act(frame), dtype=np.float32).reshape(2)
+        # 内层(seek/hybrid)若本拍已检测过,直接复用,省一次 ~25ms 的连通域
+        det = getattr(self.inner, "last_detection", None)
+        if det is None:
+            det = find_target(frame, ref_color=self.ref_color, tolerance=self.tolerance)
+        self.last_detection = det
+        if det.ok:
+            h, w = frame.shape[:2]
+            err = float(np.hypot(det.cx - (w - 1) / 2.0, det.cy - (h - 1) / 2.0))
+            now = _t.perf_counter()
+            if err <= det.radius_px * self.err_frac and now - self._last_fire >= self.cooldown_s:
+                if self.click_fn():
+                    self._last_fire = now
+                    self.n_fires += 1
+                    self.n_hits_inferred += 1  # Gridshot:盘内点击必中
+        return a
+
+    def reset(self) -> None:
+        self.inner.reset()
+        self._last_fire = -1e9
+        self.n_fires = 0
+        self.n_hits_inferred = 0
+
+    def close(self) -> None:
+        self.inner.close()
+
+
+class TeacherCollectController:
+    """导师采集器:seek 当导师驱动相机,同时用真实链路步进网络并记录数据对。
+
+    记录 (X=DN 放电率 [n_features], Y=seek 的归一化 action) —— 与离线
+    fit_readout 的 collect_training_set 完全同构,只是"靶场帧"换成了
+    "真实游戏帧"、"PID 导师"换成了"seek 导师"。
+
+    数据在 close() 时落盘 npz(X, Y, 元信息)。注意 tick 成本 ≈ seek(25ms)
+    + 视网膜+脑(45ms)≈ 70ms → ~14 Hz,可接受。
+    """
+
+    name = "collect(seek-teacher)"
+    blind = False  # seek 内层用检测;数据本身只含 (DN rates, seek action)
+
+    def __init__(self, system, ref_color=(48, 224, 224), tolerance: float = 60.0,
+                 kp: float = 1.2, kd: float = 0.15, use_aim_detect: bool = False,
+                 out_npz=None) -> None:
+        self.system = system
+        self._seek = SeekController(ref_color=ref_color, tolerance=tolerance,
+                                   kp=kp, kd=kd, use_aim_detect=use_aim_detect)
+        self._out_npz = out_npz
+        self._X: list[np.ndarray] = []
+        self._Y: list[np.ndarray] = []
+        self.last_detection = self._seek.last_detection
+
+    @property
+    def brain(self):
+        return self.system.brain
+
+    def act(self, frame: np.ndarray) -> np.ndarray:
+        a = np.asarray(self._seek.act(frame), dtype=np.float32).reshape(2)
+        # 平行步进真实链路(不参与控制,只为采集 DN 特征)
+        drive = self.system.retina.frame_to_spikes(frame)
+        n = self.system.brain.cfg.steps_per_frame
+        if hasattr(self.system.brain, "step_many"):
+            self.system.brain.step_many(n, drive[:, 0], drive[:, 1],
+                                        self.system.brain.cfg.dt_ms)
+        else:
+            for _ in range(n):
+                self.system.brain.step(drive[:, 0], drive[:, 1], self.system.brain.cfg.dt_ms)
+        x = np.asarray(self.system.brain.rates, dtype=np.float32)[self.system.readout.feature_ids]
+        self._X.append(x.astype(np.float32))
+        self._Y.append(a.astype(np.float32))
+        self.last_detection = self._seek.last_detection
+        return a
+
+    def reset(self) -> None:
+        self.system.reset()
+
+    def close(self) -> None:
+        if self._out_npz and self._X:
+            X = np.stack(self._X)
+            Y = np.stack(self._Y)
+            np.savez_compressed(self._out_npz, X=X, Y=Y,
+                                feature_ids=self.system.readout.feature_ids.astype(np.int64))
+            logger.info("TeacherCollect: 保存 %d 样本 -> %s", X.shape[0], self._out_npz)
+        self._seek.close()
