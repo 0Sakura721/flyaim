@@ -115,6 +115,39 @@ class GatedConnectomeRNN:
         cp = self.cp
         return cp.stack([cp.sum(self.R[0] * h), cp.sum(self.R[1] * h)])
 
+    def _spmm_ops(self):
+        """惰性构建自定义 SpMM kernel 句柄(见 flyaim/gpu/csr_spmm.py)。
+
+        本机无 cuBLAS/cuSPARSE 优化路径,必须用 RawKernel 才有多倍收益。
+        Wz 与 W 的 data 在训练中会分道扬镳,故各自独立建算子(不做 0.5 复用)。
+        """
+        if getattr(self, "_opW", None) is None:
+            from flyaim.gpu.csr_spmm import CSRSpMM
+
+            self._opW = CSRSpMM(self.cp, self.W)
+            self._opWz = CSRSpMM(self.cp, self.Wz)
+            self._opP = CSRSpMM(self.cp, self.P)
+        return self._opW, self._opWz, self._opP
+
+    def forward_batch(self, U, h):
+        """批量前向:U (1536,B),h (n,B) -> a (2,B), h_new (n,B)。
+
+        用自定义 CSR SpMM(block-per-row,权重广播读)替代退化的 cuSPARSE。
+        读出用逐元素乘加(无 cuBLAS)。与 ``forward_step`` 逐算子同构。
+        """
+        cp = self.cp
+        opW, opWz, opP = self._spmm_ops()
+        PU_t = opP(U)                                         # (n,B)
+        pre_z = opWz(h) + self.gz[:, None] * PU_t + self.bz[:, None]
+        z = 1.0 / (1.0 + cp.exp(-pre_z))
+        pre_h = opW(h) + self.g[:, None] * PU_t + self.b[:, None]
+        cand = cp.tanh(pre_h)
+        h_new = (1.0 - z) * h + z * cand
+        a0 = cp.sum(self.R[0][:, None] * h_new, axis=0)       # (B,)
+        a1 = cp.sum(self.R[1][:, None] * h_new, axis=0)
+        a = cp.clip(cp.stack([a0, a1], axis=0), -1.0, 1.0)    # (2,B)
+        return a, h_new, PU_t, z, cand
+
     # ---------------------------------------------------------------- 反传
 
     def backward_steps(self, traces: list[dict], ys: list[np.ndarray]) -> float:
@@ -166,6 +199,107 @@ class GatedConnectomeRNN:
         cp = self.cp
         v = cp.asarray(v)
         return v[0] * self.R[0] + v[1] * self.R[1]
+
+    # ------------------------------------------------------------ 批量反传
+
+    def _bt_ops(self):
+        """惰性构建 W^T / 边梯度算子(W^T 建成 CSR 一次)。"""
+        cp = self.cp
+        if getattr(self, "_opWT", None) is None:
+            from flyaim.gpu.csr_spmm import CSRSpMM, EdgeGrad
+
+            self._opWT = CSRSpMM(cp, self.W.T.tocsr())
+            self._opWzT = CSRSpMM(cp, self.Wz.T.tocsr())
+            self._opEdge = EdgeGrad(cp)
+            self._rows_c = cp.ascontiguousarray(self.rows, dtype=cp.int32)
+            self._cols_c = cp.ascontiguousarray(self.cols, dtype=cp.int32)
+        return self._opWT, self._opWzT, self._opEdge
+
+    def backward_batch(self, traces: list[dict], ys):
+        """批量 TBPTT。traces[t] 含批量张量 (n,B)/(2,B);ys[t] 是 (B,2) 目标。
+
+        梯度 = B 个独立环境梯度的**均值**(等价于对这 B 条轨迹做 minibatch)。
+        用自定义 SpMM 做 W^T 回传、EdgeGrad 做 gW 聚集(无原子)。
+        与 ``backward_steps`` 的数值一致性由 tools/verify_gpu_backward.py 验证。
+        """
+        cp = self.cp
+        opWT, opWzT, opEdge = self._bt_ops()
+        T = len(traces)
+        Yc_all = [cp.asarray(y, dtype=cp.float32).T for y in ys]   # 每帧 (2,B)
+        B = int(Yc_all[0].shape[1])
+        dR = cp.zeros((2, self.n), dtype=cp.float32)
+        dg = cp.zeros(self.n, dtype=cp.float32)
+        dgz = cp.zeros(self.n, dtype=cp.float32)
+        gW = cp.zeros(self.m, dtype=cp.float32)
+        gWz = cp.zeros(self.m, dtype=cp.float32)
+        loss = 0.0
+        for t in range(T):
+            e = cp.asarray(traces[t]["a"], dtype=cp.float32) - Yc_all[t]
+            h = traces[t]["h"]
+            dR[0] += cp.sum(e[0][None, :] * h, axis=1)
+            dR[1] += cp.sum(e[1][None, :] * h, axis=1)
+        dh_carry = cp.zeros((self.n, B), dtype=cp.float32)
+        for t in range(T - 1, -1, -1):
+            tr = traces[t]
+            e = cp.asarray(tr["a"], dtype=cp.float32) - Yc_all[t]
+            loss += float(cp.sum(e * e)) / (2.0 * T * B)
+            dh_t = self.R[0][:, None] * e[0][None, :] + self.R[1][:, None] * e[1][None, :] + dh_carry
+            dpre_h = dh_t * tr["z"] * (1.0 - tr["cand"] ** 2)
+            dpre_z = dh_t * (tr["cand"] - tr["h_prev"]) * tr["z"] * (1.0 - tr["z"])
+            dh_carry = dh_t * (1.0 - tr["z"]) + opWT(dpre_h) + opWzT(dpre_z)
+            gW += opEdge(self._rows_c, self._cols_c, dpre_h, tr["h_prev"])
+            gWz += opEdge(self._rows_c, self._cols_c, dpre_z, tr["h_prev"])
+            dg += cp.sum(dpre_h * tr["PU"], axis=1)
+            dgz += cp.sum(dpre_z * tr["PU"], axis=1)
+        s = 2.0 / (T * B)
+        dR *= s; dg *= s; dgz *= s; gW *= s; gWz *= s
+        for grad in (dR, dg, dgz, gW, gWz):
+            nrm = cp.sqrt(cp.sum(grad * grad))
+            f = cp.minimum(1.0, self._clip / (nrm + 1e-9))
+            grad *= f
+        self.t_adam += 1
+        self._adam("R", self.R, dR)
+        self._adam("W", self.W.data, gW)
+        self._adam("Wz", self.Wz.data, gWz)
+        self._adam("g", self.g, dg)
+        self._adam("gz", self.gz, dgz)
+        return loss
+
+    def backward_batch_grads(self, traces: list[dict], ys):
+        """同 ``backward_batch`` 但**不更新参数**,返回裁剪前的原始梯度。
+
+        仅供 tools/verify_gpu_backward.py 做等价性验证(不参与训练)。
+        """
+        cp = self.cp
+        opWT, opWzT, opEdge = self._bt_ops()
+        T = len(traces)
+        Yc_all = [cp.asarray(y, dtype=cp.float32).T for y in ys]
+        B = int(Yc_all[0].shape[1])
+        dR = cp.zeros((2, self.n), dtype=cp.float32)
+        dg = cp.zeros(self.n, dtype=cp.float32)
+        dgz = cp.zeros(self.n, dtype=cp.float32)
+        gW = cp.zeros(self.m, dtype=cp.float32)
+        gWz = cp.zeros(self.m, dtype=cp.float32)
+        for t in range(T):
+            e = cp.asarray(traces[t]["a"], dtype=cp.float32) - Yc_all[t]
+            h = traces[t]["h"]
+            dR[0] += cp.sum(e[0][None, :] * h, axis=1)
+            dR[1] += cp.sum(e[1][None, :] * h, axis=1)
+        dh_carry = cp.zeros((self.n, B), dtype=cp.float32)
+        for t in range(T - 1, -1, -1):
+            tr = traces[t]
+            e = cp.asarray(tr["a"], dtype=cp.float32) - Yc_all[t]
+            dh_t = (self.R[0][:, None] * e[0][None, :]
+                    + self.R[1][:, None] * e[1][None, :] + dh_carry)
+            dpre_h = dh_t * tr["z"] * (1.0 - tr["cand"] ** 2)
+            dpre_z = dh_t * (tr["cand"] - tr["h_prev"]) * tr["z"] * (1.0 - tr["z"])
+            dh_carry = dh_t * (1.0 - tr["z"]) + opWT(dpre_h) + opWzT(dpre_z)
+            gW += opEdge(self._rows_c, self._cols_c, dpre_h, tr["h_prev"])
+            gWz += opEdge(self._rows_c, self._cols_c, dpre_z, tr["h_prev"])
+            dg += cp.sum(dpre_h * tr["PU"], axis=1)
+            dgz += cp.sum(dpre_z * tr["PU"], axis=1)
+        s = 2.0 / (T * B)
+        return {"R": dR * s, "g": dg * s, "gz": dgz * s, "W": gW * s, "Wz": gWz * s}
 
     def _adam(self, name, param, grad):
         cp = self.cp
@@ -349,7 +483,8 @@ def train_arm(arm: str, frames: int, out_dir: Path, publish=None) -> dict:
         print(f"[{arm}] 轮 {r} 完成 loss={lr_loss:.4f}({time.perf_counter()-t0:.0f}s)",
               flush=True)
         if publish is not None:
-            publish("round_done", round=r, loss=lr_loss, policy=policy_driven)
+            # DAgger 轮是策略驱动(collect 传的 policy_driven=True)
+            publish("round_done", round=r, loss=lr_loss, policy=True)
 
     net.load_state(best["state"])
     net.save(out_dir / f"{arm}_ann2_best.npz")
