@@ -316,6 +316,65 @@ def train_arm(arm: str, frames: int = 12000, out_dir: Path | None = None) -> dic
     return out
 
 
+def dagger(net: ConnectomeRNN, round_frames: int, policy_driven: bool,
+           buffer: list[list[tuple[np.ndarray, np.ndarray]]],
+           episode_seeds) -> None:
+    """一轮 DAgger 采集:policy_driven=False 时教师驱动(BC 轮 0),
+    True 时 net 驱动、教师逐帧标注;样本聚合入 buffer(按 episode)。"""
+    roles = load_roles(D / "roles.json")
+    from flyaim.retina.encoder import Retina
+    from flyaim.bridge.controllers import SeekController
+    from flyaim.arena.arena import Arena
+
+    retina = Retina(RetinaConfig(), input_neuron_ids=roles.visual_input)
+    teacher = SeekController(ref_color=(235, 70, 70), tolerance=80.0,
+                             use_aim_detect=False)
+    for seed in episode_seeds:
+        arena = Arena(ArenaConfig(max_frames=900), seed=seed)
+        retina.reset()
+        h = net.cp.zeros(net.n, dtype=net.cp.float32)
+        frame_img = arena.reset()
+        ep: list[tuple[np.ndarray, np.ndarray]] = []
+        for _ in range(round_frames):
+            drive = retina.frame_to_spikes(frame_img)
+            u = retina_drive_to_u(retina, drive)
+            y = np.asarray(teacher.act(frame_img), dtype=np.float32)
+            ep.append((u, y))
+            if policy_driven:
+                a, h = net.act_closed_loop(u, h)
+            else:
+                a = y.astype(np.float32)
+            res = arena.step(a)
+            frame_img = res.frame
+            if res.done or arena.done:
+                buffer.append(ep)
+                ep = []
+                h[:] = 0
+                arena.reset()
+                retina.reset()
+        if ep:
+            buffer.append(ep)
+
+
+def train_on_buffer(net: ConnectomeRNN, buffer: list, passes: int = 1) -> float:
+    """聚合缓冲上 1 pass TBPTT 训练。返回平均 loss。"""
+    cp = net.cp
+    losses = []
+    order = np.random.default_rng(SEED + net.t_adam).permutation(len(buffer))
+    for ei in order:
+        ep = buffer[ei]
+        h = cp.zeros(net.n, dtype=cp.float32)
+        traces, ys = [], []
+        for u, y in ep:
+            a, h_new, PU_t = net.forward_step(u, h)
+            traces.append({"a": a, "h": h_new, "h_prev": h, "PU": PU_t})
+            ys.append(y)
+            h = h_new
+        losses.append(net.backward_steps(traces, ys))
+        net.renormalize_spectral_radius(0.9)
+    return float(np.mean(losses)) if losses else float("nan")
+
+
 def eval_arm(net: ConnectomeRNN, seeds: int = 10, frames: int = 900,
              tag: str = "") -> list[dict]:
     roles = load_roles(D / "roles.json")
