@@ -126,6 +126,9 @@ def main() -> int:
     ap.add_argument("--frames", type=int, default=12000)
     ap.add_argument("--seeds", type=int, default=10)
     ap.add_argument("--arms", default="real,shuffle")
+    # TBPTT 长度 = 采集 chunk 长度。每帧 traces 存 4 个 (n,B) 张量:
+    #   T=8/16/32 @B=64 约 1.4/2.7/5.5 GB。6GB 卡上 T=16 留足余量。
+    ap.add_argument("--tbptt", type=int, default=16)
     args = ap.parse_args()
 
     import cupy as cp
@@ -163,7 +166,7 @@ def main() -> int:
         arena._rng = cp.random.default_rng(0)
         print(f"[{arm}] GPU 轮 0:BC {args.frames} 帧 (envs={args.envs})", flush=True)
         b1 = rollout_gpu(net, retina, arena, rows, cells, args.frames, False, pub,
-                         sample_idx)
+                         sample_idx, chunk=args.tbptt)
         l0 = train_pass(net, b1, epochs=1)
         print(f"[{arm}] 轮 0 loss={l0:.4f} ({time.perf_counter()-t0:.0f}s)", flush=True)
         pub("round_done", round=0, loss=l0, policy=False)
@@ -173,7 +176,8 @@ def main() -> int:
 
         for r in (1, 2):
             print(f"[{arm}] GPU 轮 {r}:DAgger 8000 帧 × 2 epochs", flush=True)
-            b = rollout_gpu(net, retina, arena, rows, cells, 8000, True, pub, sample_idx)
+            b = rollout_gpu(net, retina, arena, rows, cells, 8000, True, pub, sample_idx,
+                            chunk=args.tbptt)
             ll = train_pass(net, b, epochs=2)
             print(f"[{arm}] 轮 {r} loss={ll:.4f} ({time.perf_counter()-t0:.0f}s)",
                   flush=True)
