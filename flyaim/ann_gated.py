@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 D = ROOT / "flyaim" / "data" / "build"
 SEED = 20261004
 CHUNK = 32
-PUBLISH_EVERY = 1   # 仪表盘发布粒度(帧)。1 = 每帧刷新(2026-10-04 改为逐帧)
+PUBLISH_EVERY = 10  # 仪表盘发布粒度(帧)。1 = 逐帧;10 = 每 10 帧(2026-10-04 用户要求)
 
 
 def _spectral_scale(W, target=0.9, iters=30):
@@ -296,7 +296,7 @@ def train_arm(arm: str, frames: int, out_dir: Path, publish=None) -> dict:
                     h_h = cp.asnumpy(hi if idx is None else hi[idx])
                     publish("rollout", policy=policy_driven, frames=collected,
                             target_dist=float(res.target_dist),
-                            hit=bool(res.hit), activity=h_h)
+                            hit=bool(res.hit), activity=h_h, frame=f)
                 if res.done or a.done:
                     break
             if ep:

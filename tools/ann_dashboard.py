@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import queue
 import threading
 from pathlib import Path
 
@@ -114,7 +115,7 @@ def _make_html(layout: dict, title: str) -> str:
  .kpi .v{{font-size:30px;font-weight:700;color:#eaf2ff;font-variant-numeric:tabular-nums}}
  .kpi .l{{font-size:12px;color:#7b8ba0;margin-top:2px}}
  .kpi .u{{font-size:14px;color:#8fa;margin-left:4px}}
- .main{{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:0 18px 14px}}
+ .main{{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;padding:0 18px 14px}}
  .card{{background:#161e27;border:1px solid #223;border-radius:8px;padding:10px}}
  .card h2{{font-size:14px;margin:0 0 8px;color:#b9c7d8;font-weight:600}}
  canvas{{width:100%;display:block;border-radius:6px;background:#0b0f14}}
@@ -142,6 +143,12 @@ def _make_html(layout: dict, title: str) -> str:
       <span><span class="sw" style="background:#20c060"></span>随机基准 278px</span></div>
   </div>
   <div class="card">
+    <h2>训练画面 <span class="note">(靶场实帧 · 准星/靶/命中判定)</span></h2>
+    <canvas id="scene" height="360" style="background:#0b0f14"></canvas>
+    <div class="legend"><span>白点=准星</span><span>红圈=靶</span>
+      <span class="note">准星进入靶半径即命中</span></div>
+  </div>
+  <div class="card">
     <h2>神经活动 <span class="note" id="actnote">(解剖分组簇布局 · 非真实脑坐标)</span></h2>
     <canvas id="brain" height="360"></canvas>
     <div class="legend"><span><span class="sw" style="background:#3a6ea8"></span>下降</span>
@@ -156,13 +163,26 @@ const LAYOUT = {payload};
 let S = null;
 const cvs = document.getElementById('brain'), ctx = cvs.getContext('2d');
 const ccv = document.getElementById('curves'), cctx = ccv.getContext('2d');
+const scv = document.getElementById('scene'), sctx = scv.getContext('2d');
 const dpr = window.devicePixelRatio || 1;
+const sceneImg = new Image();
+let sceneReady = false;
+sceneImg.onload = () => {{ sceneReady = true; }};
+function drawScene(){{
+  const w = scv.width/dpr, h = scv.height/dpr;
+  sctx.clearRect(0,0,w,h);
+  if(!sceneReady) return;
+  // 保持靶场 4:3 纵横比,居中 letterbox
+  const iw = sceneImg.naturalWidth, ih = sceneImg.naturalHeight;
+  const s = Math.min(w/iw, h/ih), dw = iw*s, dh = ih*s;
+  sctx.drawImage(sceneImg, (w-dw)/2, (h-dh)/2, dw, dh);
+}}
 function fit(c, ctx){{
   const r = c.getBoundingClientRect();
   c.width = r.width * dpr; c.height = c.height / (c.height/r.height) * 0; // reset below
 }}
 function resize(){{
-  for (const [c, x] of [[cvs, ctx], [ccv, cctx]]) {{
+  for (const [c, x] of [[cvs, ctx], [ccv, cctx], [scv, sctx]]) {{
     const r = c.getBoundingClientRect();
     c.width = Math.max(200, r.width * dpr);
     c.height = Math.max(150, (parseFloat(c.getAttribute('height')) || 360) * dpr);
@@ -175,6 +195,10 @@ function drawBrain(){{
   const w = cvs.width/dpr, h = cvs.height/dpr;
   ctx.clearRect(0,0,w,h);
   if(!S || !S.activity) return;
+  // 等比缩放:布局是 0..1 方形坐标,画布为整行宽矩形;若按 x*w/y*h 独立
+  // 缩放会把脑形横向拉伸。取短边做边长、水平居中,保持形状不变。
+  const side = Math.min(w, h);
+  const ox = (w - side)/2, oy = (h - side)/2;
   const act = S.activity;
   const n = act.length;
   // 相对水平:z = (v - mean) / std → 蓝(低于均值)/橙(高于均值)
@@ -193,7 +217,7 @@ function drawBrain(){{
     const rad = 0.8 + 2.4*a;
     ctx.fillStyle = col;
     ctx.beginPath();
-    ctx.arc(LAYOUT.x[i]*w, LAYOUT.y[i]*h, rad, 0, 6.283);
+    ctx.arc(ox + LAYOUT.x[i]*side, oy + LAYOUT.y[i]*side, rad, 0, 6.283);
     ctx.fill();
   }}
 }}
@@ -240,9 +264,13 @@ async function tick(){{
     document.getElementById('k_fps').innerHTML = (S.fps!=null? S.fps.toFixed(1):'—')+'<span class="u">f/s</span>';
     document.getElementById('k_dist').innerHTML = (S.target_dist!=null? S.target_dist.toFixed(0):'—')+'<span class="u">px</span>';
     document.getElementById('foot').textContent = S.status || '';
-    drawBrain(); drawCurves();
+    if(S && S.frame_jpg && S.frame_jpg !== sceneImg._src){{
+      sceneImg._src = S.frame_jpg;
+      sceneImg.src = 'data:image/jpeg;base64,' + S.frame_jpg;
+    }}
+    drawScene(); drawBrain(); drawCurves();
   }}catch(e){{ document.getElementById('conn').textContent = '连接中断'; }}
-  setTimeout(tick, 30);
+  setTimeout(tick, 150);
 }}
 tick();
 </script></body></html>"""
@@ -309,23 +337,54 @@ def serve(state_path: Path, layout: dict, port: int, title: str, open_browser: b
         pass
 
 
+def _encode_jpeg_b64(frame: np.ndarray, quality: int = 75,
+                     downsample: int = 2) -> str:
+    """靶场帧 -> base64 JPEG(仪表盘"训练画面"面板用)。
+
+    实测(2026-10-04):640×480 JPEG 2.32ms、320×240 0.55ms。面板显示宽度仅
+    ~570px,2× 降采样视觉无差别却省 ~75% 编码时间与一半 payload。
+    """
+    import base64
+    import io
+
+    from PIL import Image
+
+    arr = np.ascontiguousarray(frame)
+    if downsample > 1:
+        arr = np.ascontiguousarray(arr[::downsample, ::downsample])
+    im = Image.fromarray(arr)
+    buf = io.BytesIO()
+    im.save(buf, format="JPEG", quality=quality)
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
 class StatePublisher:
-    """训练进程侧:把状态原子写入 JSON(仪表盘读)。"""
+    """训练进程侧:把状态写入 JSON(仪表盘读)。
+
+    逐帧发布时,**编码/JSON/写盘全部放到后台 worker 线程**,训练主循环只做
+    一次入队(微秒级)。这些工作虽然单项只有 ~1ms,但都在训练线程里持 GIL
+    串行执行,叠加后实测把拍频从 27.6 压到 19.2 f/s —— 故必须移出主循环。
+    队列满时丢最旧:可视化丢帧无害,训练绝不阻塞。
+    """
 
     def __init__(self, path: str | Path, sample_idx: np.ndarray | None = None,
-                 total_frames: int | None = None):
+                 total_frames: int | None = None, frame_every: int = 1,
+                 queue_size: int = 8):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.sample_idx = None if sample_idx is None else np.asarray(sample_idx, np.int64)
         self.total = total_frames
+        self.frame_every = int(frame_every)   # 画面发布粒度(1=每帧);<=0 关闭
+        self._frame_n = 0
         self.loss_hist: list[float] = []
         self.eval_hist: list[list] = []   # [frame_or_progress, mean_dist]
         self.frame = 0
         self._t0 = None
-        self._frames_at_t0 = 0
-        self._prev_activity = None
         self._last_activity = None
+        self._last_frame = None
         self._last_rollout_n = None
+        self._q: "queue.Queue" = queue.Queue(maxsize=int(queue_size))
+        threading.Thread(target=self._run, daemon=True, name="dash-pub").start()
 
     def __call__(self, stage: str, **kv):
         import time
@@ -337,17 +396,70 @@ class StatePublisher:
             prev = self._last_rollout_n or 0
             self.frame += (n - prev) if n >= prev else n   # 回绕(新轮)时直接加
             self._last_rollout_n = n
-            fps = n / max(time.perf_counter() - self._t0, 1e-9)
-            act = kv.get("activity")
-            payload = {
-                "ok": True, "stage": "rollout", "frame": self.frame,
+            self._enqueue({
+                "kind": "rollout", "frame": self.frame, "n": n,
                 "loss": self.loss_hist[-1] if self.loss_hist else None,
-                "fps": fps, "target_dist": kv.get("target_dist"),
-                "hit": kv.get("hit"),
-                "status": f"采集中({'策略驱动' if kv.get('policy') else '教师驱动'}) "
-                          f"— 本轮 {n} 帧",
-                "loss_hist": self.loss_hist, "eval_hist": self.eval_hist,
+                "fps": n / max(time.perf_counter() - self._t0, 1e-9),
+                "target_dist": kv.get("target_dist"), "hit": kv.get("hit"),
+                "policy": kv.get("policy"), "activity": kv.get("activity"),
+                "arena_frame": kv.get("frame"),
+                "loss_hist": list(self.loss_hist), "eval_hist": list(self.eval_hist),
+            })
+        elif stage == "round_done":
+            self.loss_hist.append(float(kv.get("loss", 0.0)))
+            self._last_rollout_n = None
+            self._t0 = None
+            self._enqueue({"kind": "round_done", "frame": self.frame,
+                           "round": kv.get("round"), "loss": self.loss_hist[-1],
+                           "loss_hist": list(self.loss_hist),
+                           "eval_hist": list(self.eval_hist)})
+        elif stage == "eval":
+            vals = kv.get("values", [])
+            for i, v in enumerate(vals):
+                self.eval_hist.append([i + 1, float(v)])
+            self._enqueue({"kind": "eval", "frame": self.frame,
+                           "loss": self.loss_hist[-1] if self.loss_hist else None,
+                           "arm": kv.get("arm"), "has_vals": bool(vals),
+                           "vals_mean": float(np.mean(vals)) if vals else None,
+                           "loss_hist": list(self.loss_hist),
+                           "eval_hist": list(self.eval_hist)})
+
+    def _enqueue(self, spec: dict):
+        """非阻塞入队;满则丢最旧一帧(只影响可视化的流畅度)。"""
+        try:
+            self._q.put_nowait(spec)
+        except queue.Full:
+            try:
+                self._q.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                self._q.put_nowait(spec)
+            except queue.Full:
+                pass
+
+    def _run(self):
+        while True:
+            spec = self._q.get()
+            if spec is None:
+                return
+            try:
+                self._build_and_write(spec)
+            except Exception:
+                pass   # 可视化失败绝不拖累训练
+
+    def _build_and_write(self, spec: dict):
+        kind = spec["kind"]
+        if kind == "rollout":
+            payload = {
+                "ok": True, "stage": "rollout", "frame": spec["frame"],
+                "loss": spec["loss"], "fps": spec["fps"],
+                "target_dist": spec["target_dist"], "hit": spec["hit"],
+                "status": f"采集中({'策略驱动' if spec['policy'] else '教师驱动'}) "
+                          f"— 本轮 {spec['n']} 帧",
+                "loss_hist": spec["loss_hist"], "eval_hist": spec["eval_hist"],
             }
+            act = spec["activity"]
             if act is not None and self.sample_idx is not None:
                 arr = np.asarray(act)
                 # 训练侧可能已在 GPU 上按 sample_idx 切片(逐帧刷新的省流路径);
@@ -355,26 +467,25 @@ class StatePublisher:
                 if arr.size != self.sample_idx.size:
                     arr = arr[self.sample_idx]
                 payload["activity"] = np.round(arr.astype(float), 3).tolist()
-                # prev_activity 前端未使用(仅写不读);逐帧刷新时它是纯开销
-                # (payload 翻倍),故不再下发 —— 2026-10-04。
                 self._last_activity = payload["activity"]
-            self._write(payload)
-        elif stage == "round_done":
-            self.loss_hist.append(float(kv.get("loss", 0.0)))
-            self._last_rollout_n = None
-            self._write({"ok": True, "stage": "round_done", "frame": self.frame,
-                         "loss": self.loss_hist[-1], "status": f"轮 {kv.get('round')} 训练完成",
-                         "loss_hist": self.loss_hist, "eval_hist": self.eval_hist})
-            self._t0 = None
-        elif stage == "eval":
-            vals = kv.get("values", [])
-            for i, v in enumerate(vals):
-                self.eval_hist.append([i + 1, float(v)])
-            self._write({"ok": True, "stage": "eval", "frame": self.frame,
-                         "loss": self.loss_hist[-1] if self.loss_hist else None,
-                         "status": f"评估 {kv.get('arm')}: 均值 "
-                                   f"{np.mean(vals):.0f}px" if vals else "评估中",
-                         "loss_hist": self.loss_hist, "eval_hist": self.eval_hist})
+            fr = spec["arena_frame"]
+            if fr is not None and self.frame_every > 0:
+                self._frame_n += 1
+                if self._frame_n % self.frame_every == 0:
+                    payload["frame_jpg"] = _encode_jpeg_b64(fr)
+                    self._last_frame = payload["frame_jpg"]
+        elif kind == "round_done":
+            payload = {"ok": True, "stage": "round_done", "frame": spec["frame"],
+                       "loss": spec["loss"],
+                       "status": f"轮 {spec['round']} 训练完成",
+                       "loss_hist": spec["loss_hist"], "eval_hist": spec["eval_hist"]}
+        else:  # eval
+            payload = {"ok": True, "stage": "eval", "frame": spec["frame"],
+                       "loss": spec["loss"],
+                       "status": (f"评估 {spec['arm']}: 均值 {spec['vals_mean']:.0f}px"
+                                  if spec["has_vals"] else "评估中"),
+                       "loss_hist": spec["loss_hist"], "eval_hist": spec["eval_hist"]}
+        self._write(payload)
 
     def _write(self, payload: dict):
         """原地写状态(D16 教训:Windows 上 os.replace 到被读端打开的文件
@@ -382,6 +493,8 @@ class StatePublisher:
         绝不拖累训练——最终兜底完全静默。"""
         if "activity" not in payload and self._last_activity is not None:
             payload["activity"] = self._last_activity
+        if "frame_jpg" not in payload and self._last_frame is not None:
+            payload["frame_jpg"] = self._last_frame
         import time
 
         body = json.dumps(payload, ensure_ascii=False)
