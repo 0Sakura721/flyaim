@@ -16,3 +16,7 @@ __pycache__/
 Thumbs.db
 .DS_Store
 *.log
+
+# 可视化缓存
+.cache/ann_layout.json
+.cache/ann2_state.json
