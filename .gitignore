@@ -23,3 +23,7 @@ Thumbs.db
 # 可视化缓存
 .cache/ann_layout.json
 .cache/ann2_state.json
+
+# 独立 exe 产物
+dist/
+.cache/pyi/
