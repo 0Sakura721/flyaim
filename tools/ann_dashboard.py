@@ -242,7 +242,7 @@ async function tick(){{
     document.getElementById('foot').textContent = S.status || '';
     drawBrain(); drawCurves();
   }}catch(e){{ document.getElementById('conn').textContent = '连接中断'; }}
-  setTimeout(tick, 500);
+  setTimeout(tick, 30);
 }}
 tick();
 </script></body></html>"""
@@ -349,11 +349,14 @@ class StatePublisher:
                 "loss_hist": self.loss_hist, "eval_hist": self.eval_hist,
             }
             if act is not None and self.sample_idx is not None:
-                payload["activity"] = np.round(
-                    np.asarray(act)[self.sample_idx].astype(float), 3).tolist()
-                if self._prev_activity is not None:
-                    payload["prev_activity"] = self._prev_activity
-                self._prev_activity = payload["activity"]
+                arr = np.asarray(act)
+                # 训练侧可能已在 GPU 上按 sample_idx 切片(逐帧刷新的省流路径);
+                # 长度已等于采样数时不再二次索引。
+                if arr.size != self.sample_idx.size:
+                    arr = arr[self.sample_idx]
+                payload["activity"] = np.round(arr.astype(float), 3).tolist()
+                # prev_activity 前端未使用(仅写不读);逐帧刷新时它是纯开销
+                # (payload 翻倍),故不再下发 —— 2026-10-04。
                 self._last_activity = payload["activity"]
             self._write(payload)
         elif stage == "round_done":
@@ -382,13 +385,14 @@ class StatePublisher:
         import time
 
         body = json.dumps(payload, ensure_ascii=False)
-        for attempt in range(10):
+        # 逐帧(30Hz)发布时,重试退避必须很短,否则会反过来拖住训练循环。
+        for attempt in range(3):
             try:
                 with open(self.path, "w", encoding="utf-8") as fh:
                     fh.write(body)
                 return
             except (PermissionError, OSError):
-                time.sleep(0.02 * (attempt + 1))
+                time.sleep(0.004 * (attempt + 1))
         # 仍失败则放弃这一次(只影响可视化的一个刷新点,训练继续)
 
     def set_frame(self, frame: int):

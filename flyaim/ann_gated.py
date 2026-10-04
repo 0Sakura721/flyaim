@@ -28,6 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 D = ROOT / "flyaim" / "data" / "build"
 SEED = 20261004
 CHUNK = 32
+PUBLISH_EVERY = 1   # 仪表盘发布粒度(帧)。1 = 每帧刷新(2026-10-04 改为逐帧)
 
 
 def _spectral_scale(W, target=0.9, iters=30):
@@ -256,13 +257,18 @@ def train_arm(arm: str, frames: int, out_dir: Path, publish=None) -> dict:
 
         buffer = []
         collected = 0
-        for seed in range(seed_off, seed_off + max(1, n_frames // 900 + 1)):
+        seed = seed_off
+        # 每个 arena 跑一个 episode(≤900 帧),累计到恰好 n_frames 帧。
+        # 修正:旧实现内层 range(n_frames) 叠加 n_frames//900+1 个 arena,
+        # 实际采集 ~14× 预算帧数,违反 C2 预注册预算 —— 2026-10-04 发现。
+        while collected < n_frames:
             a = Arena(ArenaConfig(max_frames=900), seed=seed)
+            seed += 1
             r2 = Retina(RetinaConfig(), input_neuron_ids=roles.visual_input)
             hh = cp.zeros(net.n, dtype=cp.float32)
             f = a.reset()
             ep = []
-            for _ in range(n_frames):
+            for _ in range(min(900, n_frames - collected)):
                 drive = r2.frame_to_spikes(f)
                 u = retina_drive_to_u(r2, drive)
                 y = np.asarray(teacher.act(f), dtype=np.float32)
@@ -278,21 +284,21 @@ def train_arm(arm: str, frames: int, out_dir: Path, publish=None) -> dict:
                 res = a.step(a_act)
                 f = res.frame
                 collected += 1
-                if publish is not None and collected % 100 == 0:
-                    import numpy as _np
-                    h_h = cp.asnumpy(cp.abs(hh))
+                if publish is not None and collected % PUBLISH_EVERY == 0:
+                    # 只把采样点搬回 CPU(GPU 侧先切片):全脑 166,700 个
+                    # 每帧 667 KB + JSON 编码会明显拖慢;采样后仅 ~16 KB。
+                    act_idx = getattr(publish, "sample_idx", None)
+                    idx = None if act_idx is None else cp.asarray(act_idx)
+                    hi = cp.abs(hh)
                     if PU_view is not None:
                         # 教师阶段用 |输入驱动| 反映"信号到达强度"(非零)
-                        h_h = h_h + cp.asnumpy(cp.abs(PU_view)) * 10.0
+                        hi = hi + cp.abs(PU_view) * 10.0
+                    h_h = cp.asnumpy(hi if idx is None else hi[idx])
                     publish("rollout", policy=policy_driven, frames=collected,
                             target_dist=float(res.target_dist),
                             hit=bool(res.hit), activity=h_h)
                 if res.done or a.done:
-                    buffer.append(ep)
-                    ep = []
-                    hh[:] = 0
-                    f = a.reset()
-                    r2.reset()
+                    break
             if ep:
                 buffer.append(ep)
         return buffer
