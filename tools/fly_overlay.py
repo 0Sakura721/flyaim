@@ -51,6 +51,8 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 IS_FROZEN = bool(getattr(sys, "frozen", False))
+if not IS_FROZEN and str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))   # 脚本模式:让 import flyaim 可用
 # 独立 exe:配置放 %APPDATA%\FlyOverlay;脚本模式:仓库 .cache
 CONFIG_PATH = ((Path(os.environ["APPDATA"]) / "FlyOverlay")
                if IS_FROZEN else (ROOT / ".cache")) / "fly_overlay_config.json"
@@ -447,6 +449,16 @@ DEFAULT_CONFIG = {
     "hide": False, "rotate_deg_per_frame": 0.04,   # 视频里脑云近乎静置
     "show": {"brain": True, "stats": True, "spark": True, "console": True},
     "exclude_from_capture": True,
+    # 实战模式(Ctrl+Alt+F 启停):捕获 window 窗口 → 复眼伺服 → 注入
+    "combat": {
+        "window": "aimlab",          # 窗口标题子串
+        "dry": True,                 # true=纯视觉观测(默认,零注入零进程影响);
+                                     # false=SendInput 注入(D18 合规边界)
+        "target_color": "48,224,224",  # Aim Lab 青靶;红靶改 235,70,70
+        "eye": "24x32",              # 复眼网格(角分辨率下限见 D26.4)
+        "max_counts": 600,           # 每拍注入计数上限(安全钳位)
+        "gain_json": None,           # 留空按 APPDATA/exe 同目录/仓库 顺序找
+    },
     # 自定义监视键:vk=虚拟键码,label=键帽,desc=动作,groups=激发分群
     "watch_keys": [
         {"vk": 0x57, "label": "W", "desc": "向前移动",
@@ -583,12 +595,15 @@ class HotkeyThread(threading.Thread):
             (MOD_CONTROL | MOD_ALT, 0x52),          # 13 R 重载配置
             (MOD_CONTROL | MOD_ALT, 0x51),          # 14 Q 退出
             (MOD_CONTROL | MOD_ALT, 0x44),          # 15 D 调整模式(拖动/缩放)
+            (MOD_CONTROL | MOD_ALT, 0x46),          # 16 F 实战启停
         ]
 
     def run(self):
         user32 = ctypes.windll.user32
         for i, (mod, vk) in enumerate(self.keys, 1):
-            user32.RegisterHotKey(None, i, mod | 0x4000, vk)
+            if not user32.RegisterHotKey(None, i, mod | 0x4000, vk):
+                print(f"[overlay] 热键注册失败 id={i} vk={vk:#x}"
+                      f"(可能被其他程序占用)", flush=True)
         self.tid = ctypes.windll.kernel32.GetCurrentThreadId()
         msg = wt.MSG()
         while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
@@ -599,6 +614,154 @@ class HotkeyThread(threading.Thread):
 
     def stop(self):
         ctypes.windll.kernel32.PostThreadMessageW(getattr(self, "tid", 0), 0x0012, 0, 0)
+
+
+def _data_dir() -> Path:
+    """flyaim/data/build 的位置:exe 用捆绑副本,脚本用仓库。"""
+    if IS_FROZEN:
+        return (Path(getattr(sys, "_MEIPASS", ".")) / "flyaim" / "data" / "build")
+    return ROOT / "flyaim" / "data" / "build"
+
+
+def _find_gain_json(cfg: dict) -> Path | None:
+    """gain.json 搜索顺序:配置指定 → APPDATA/exe 同目录/仓库。"""
+    p = (cfg.get("combat") or {}).get("gain_json")
+    cands = []
+    if p:
+        cands.append(Path(p))
+    if IS_FROZEN:
+        cands += [Path(sys.executable).parent / "gain.json",
+                  CONFIG_PATH.parent / "gain.json"]
+    else:
+        cands.append(ROOT / "flyaim" / "runs" / "bridge" / "gain.json")
+    for c in cands:
+        if c and Path(c).exists():
+            return Path(c)
+    return None
+
+
+class CombatWorker(threading.Thread):
+    """实战线程:捕获游戏窗口 → 复眼伺服 → GainModel → SendInput 注入。
+
+    dry=True 时走 NullSink(只看不注入)—— 用于管道验证/演示。
+    脑云数据:worker 把 arm.last_maps(lum/r7/r8 三张 (24,32) 视网膜图,
+    **真实驱动**)写进共享槽,overlay 主循环按布局坐标采样。
+    """
+
+    def __init__(self, cfg: dict, combat_cfg: dict, events: deque, ui: dict):
+        super().__init__(daemon=True, name="overlay-combat")
+        self.cfg = cfg
+        self.c = combat_cfg
+        self.events = events
+        self.ui = ui                  # 线程安全槽:主循环只读
+        self.ui.update({"running": True, "frames": 0, "t0": time.perf_counter(),
+                        "in_view": False, "err_px": None, "counts": [0, 0],
+                        "tick_hz": 0.0, "maps": None, "error": None})
+        self._stop_ev = threading.Event()
+
+    def stop(self):
+        self._stop_ev.set()
+
+    def _log(self, kind: str, payload: str = ""):
+        t = time.strftime("%H:%M:%S") + f".{int(time.time()*1000)%1000:03d}"
+        line = f'{{"ts":"{t}","type":"{kind}"'
+        if payload:
+            line += f",{payload}"
+        self.events.append(line + "}")
+
+    def run(self):
+        try:
+            print("[overlay] combat worker starting", flush=True)
+            self._run()
+        except Exception:
+            import traceback
+            self.ui["error"] = traceback.format_exc(limit=4)
+            print("[overlay] combat error:\n" + traceback.format_exc(), flush=True)
+            self._log("combat_error", f'"msg":"{traceback.format_exc(limit=1)}"')
+
+    def _run(self):
+        # ---- 惰性导入(绕过 exe 无 flyaim 时的优雅报错)
+        try:
+            from flyaim.bridge.capture import ScreenCapture, focus_window
+            from flyaim.bridge.controllers import EyeController
+            from flyaim.bridge.gain import GainModel
+            from flyaim.bridge.inject import NullSink, SendInputSink
+            from flyaim.baselines.eye_servo import make_eye_servo
+            from flyaim.config import RetinaConfig
+        except Exception as e:
+            self.ui["error"] = f"flyaim 模块不可用: {e}"
+            self._log("combat_error", f'"msg":"flyaim unavailable"')
+            return
+        print('[overlay] cb: imports done', flush=True)
+        window = str(self.c.get("window", "aimlab"))
+        tc = [int(x) for x in str(self.c.get("target_color", "48,224,224")).split(",")]
+        chroma = "r7" if tc[0] >= tc[1] else "r8"
+        er, ec = (int(v) for v in str(self.c.get("eye", "24x32")).lower().split("x"))
+        dry = bool(self.c.get("dry", False))
+
+        # ---- 窗口与捕获
+        from flyaim.bridge.capture import find_window_region
+
+        region = find_window_region(window)
+        # 注入模式才调前台(SendInput 相对移动只进焦点窗口);观测模式零进程交互
+        if not dry and not focus_window(window):
+            self._log("combat_error", f'"msg":"window {window!r} not found"')
+            self.ui["error"] = f"找不到标题含 {window!r} 的窗口"
+            return
+
+        print('[overlay] cb: focus ok', flush=True)
+        print('[overlay] cb: region', region, flush=True)
+        cap = ScreenCapture(region=region, out_size=(640, 480))
+        print('[overlay] cb: capture ready', flush=True)
+        # ---- 复眼臂(与 D25/D26 同一份 arm 代码)
+        arm = make_eye_servo(str(_data_dir()),
+                             retina_cfg=RetinaConfig(eye_rows=er, eye_cols=ec),
+                             v_px=14.0, cell_px=640.0 / max(1, ec),
+                             chroma=chroma, aim_mode="center", search="scan")
+        ctl = EyeController(arm)
+        # ---- 增益与注入
+        gj = _find_gain_json(self.cfg)
+        if gj is None:
+            self.ui["error"] = "缺少 gain.json(用 tools/aimlab_gain.py 生成)"
+            self._log("combat_error", '"msg":"no gain.json"')
+            return
+        gain = GainModel.load(str(gj))
+        gain.cfg.max_counts_per_tick = float(self.c.get("max_counts", 600))
+        sink = NullSink() if dry else SendInputSink(max_counts_per_tick=int(
+            self.c.get("max_counts", 600)))
+        print('[overlay] cb: arm ready, loop starts', flush=True)
+        mode = "observe" if dry else "inject"
+        self._log("combat_start", f'"mode":"{mode}","window":"{window}"'
+                  f',"chroma":"{chroma}","gain":"{Path(gj).name}"')
+        # ---- 主循环
+        n = 0
+        t0 = time.perf_counter()
+        prev_view = None
+        while not self._stop_ev.is_set():
+            frame, meta = cap.read()
+            a = ctl.act(frame)
+            cdx, cdy = gain.to_counts(a)
+            sink.send(cdx, cdy)
+            n += 1
+            in_view = arm.last_target_px is not None
+            self.ui.update({
+                "frames": n, "tick_hz": n / max(time.perf_counter() - t0, 1e-9),
+                "in_view": in_view, "err_px": (float(arm.last_err_px)
+                                               if in_view else None),
+                "counts": [int(c) for c in getattr(sink, "total_counts", (0, 0))],
+                "maps": arm.last_maps,
+            })
+            if prev_view is not None and in_view != prev_view:
+                self._log("target_" + ("found" if in_view else "lost"),
+                          f'"err_px":{float(arm.last_err_px):.1f}')
+            prev_view = in_view
+            if n % 150 == 0:
+                print(f'[overlay] combat tick f={n} in_view={in_view} '
+                      f'err={arm.last_err_px:.1f}px hz={self.ui["tick_hz"]:.0f}',
+                      flush=True)
+                self._log("combat_tick", f'"frames":{n},"in_view":{str(in_view).lower()}')
+        self._log("combat_stop", f'"frames":{n}')
+        cap.close()
 
 
 class Overlay:
@@ -651,6 +814,8 @@ class Overlay:
         self.total_events = 0
         self.frames = 0
         self.t_start = time.perf_counter()
+        self.combat_worker = None
+        self.combat_ui: dict = {}
 
         # ---- 热键
         self.cmd_q: "queue.Queue" = queue.Queue()
@@ -745,7 +910,8 @@ class Overlay:
                8: lambda: self._tog("stats"), 9: lambda: self._tog("spark"),
                10: lambda: self._tog("console"), 11: self._toggle_excl,
                12: self._toggle_hide, 13: self._reload_watch,
-               14: self._quit, 15: self._toggle_adjust}
+               14: self._quit, 15: self._toggle_adjust,
+               16: self._toggle_combat}
         fn = act.get(idx)
         if fn:
             fn()
@@ -793,6 +959,19 @@ class Overlay:
     def _on_wheel(self, e):
         self._rescale(1.06 if e.delta > 0 else 0.94)
 
+    def _toggle_combat(self):
+        """实战启停:Ctrl+Alt+F。启动 = 捕获+伺服+注入;再按 = 停止。"""
+        print("[overlay] combat toggle", flush=True)
+        if self.combat_worker is not None and self.combat_worker.is_alive():
+            self.combat_worker.stop()
+            return
+        self.combat_ui = {"running": True, "frames": 0, "t0": time.perf_counter(),
+                          "in_view": False, "err_px": None, "counts": [0, 0],
+                          "tick_hz": 0.0, "maps": None, "error": None}
+        self.combat_worker = CombatWorker(self.cfg, self.cfg.get("combat") or {},
+                                          self.mirror.events, self.combat_ui)
+        self.combat_worker.start()
+
     def _tog(self, key):
         self.show[key] = not self.show.get(key, True)
 
@@ -836,6 +1015,27 @@ class Overlay:
                         return a, held, "实时训练状态" + excl, (mdx, mdy)
             except Exception:
                 pass
+        # 实战中:脑云直接吃**真实视网膜驱动图**(worker 线程写入的 last_maps)
+        w = self.combat_worker          # 快照:热键线程可能在读取中切换 worker
+        if w is not None and w.is_alive():
+            maps = self.combat_ui.get("maps")
+            if maps:
+                er, ec = (int(v) for v in
+                          str((self.cfg.get("combat") or {}).get("eye", "24x32"))
+                          .lower().split("x"))
+                col = np.clip(((self.lx + 0.5) * ec).astype(int), 0, ec - 1)
+                row = np.clip(((self.ly + 0.5) * er).astype(int), 0, er - 1)
+                tc = str((self.cfg.get("combat") or {}).get("target_color",
+                                                            "48,224,224")).split(",")
+                ch_key = "r7" if int(tc[0]) >= int(tc[1]) else "r8"
+                a = np.zeros(len(self.lx), np.float32)
+                if maps.get("lum") is not None:
+                    a += maps["lum"][row, col]
+                if maps.get(ch_key) is not None:
+                    a += maps[ch_key][row, col]
+                a = np.clip(a / 200.0, 0, 1).astype(np.float32)  # max_drive_hz=200
+                if float(a.max()) > 0.02:
+                    return a, held, "● 观测中 · 脑云=真实视网膜" + excl, (mdx, mdy)
         target = 0.20 + 0.06 * np.sin(
             np.arange(len(self.a)) * 0.013 + time.perf_counter() * 0.4)
         for k in held:
@@ -1121,7 +1321,41 @@ class Overlay:
         d.text((rx0 + int(6 * s), int(196 * s)),
                f"视叶活动 {float(np.mean(act[ol_idx]))*100:.0f}%",
                font=self.f_lab, fill=DIM_C)
-        if held:
+        w = self.combat_worker
+        if w is not None:
+            ui = self.combat_ui
+            if not w.is_alive():
+                # 实战线程结束(正常停止或报错):展示错误并归位
+                err = ui.get("error")
+                if err and err != getattr(self, "_combat_err_shown", None):
+                    self._combat_err_shown = err
+                    d.text((rx0 + int(6 * s), int(158 * s)), "实战错误:",
+                           font=self.f_sm, fill=RED_C)
+                    for i, ln in enumerate(str(err).splitlines()[-2:]):
+                        d.text((rx0 + int(6 * s), int(174 * s) + i * int(14 * s)),
+                               ln[:46], font=self.f_lab, fill=RED_C)
+                else:
+                    d.text((rx0 + int(6 * s), int(158 * s)), "实战已停止",
+                           font=self.f_sm, fill=DIM_C)
+            else:
+                observing = bool((self.cfg.get("combat") or {}).get("dry", True))
+                d.text((rx0 + int(6 * s), int(158 * s)),
+                       "● 观测中(纯视觉)" if observing else "● 实战注入中",
+                       font=self.f_sm, fill=(GREEN if observing else ACCENT))
+                if ui.get("in_view"):
+                    d.text((rx0 + int(6 * s), int(174 * s)),
+                           f"靶在视野 err {ui.get('err_px') or 0:.0f}px",
+                           font=self.f_sm, fill=ACCENT)
+                else:
+                    d.text((rx0 + int(6 * s), int(174 * s)), "搜索中(扫掠)",
+                           font=self.f_sm, fill=DIM_C)
+                c0, c1 = ui.get("counts", (0, 0))
+                observing = bool((self.cfg.get("combat") or {}).get("dry", True))
+                tag = "决策" if observing else "注入"   # 观测模式只记录,不注入
+                d.text((rx0 + int(6 * s), int(190 * s)),
+                       f"{ui.get('tick_hz') or 0:.0f} Hz · {tag} {c0:+d},{c1:+d}",
+                       font=self.f_lab, fill=DIM_C)
+        elif held:
             k = held[0]
             d.text((rx0 + int(6 * s), int(216 * s)),
                    f"当前: {k['label']}" +
@@ -1167,13 +1401,19 @@ class Overlay:
 
     def run(self):
         print(f"fly_overlay pid={os.getpid()}", flush=True)
-        print("热键: Ctrl+Alt+D 调整(拖动/缩放) | 方向键 移动 | C 穿透 | "
-              "X 捕获排除 | H 隐藏 | Q 退出", flush=True)
+        print("热键: Ctrl+Alt+F 观测(纯视觉) | Ctrl+Alt+D 调整(拖动/缩放) | "
+              "方向键 移动 | C 穿透 | X 捕获排除 | H 隐藏 | Q 退出", flush=True)
         self.root.mainloop()
         self.hotkeys.stop()
 
 
 def main() -> int:
+    # DPI 感知:否则高缩放屏上窗口被系统放大,GetWindowRect(物理) 与
+    # tk 几何(逻辑) 错位,截图/定位都会偏
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except Exception:
+        pass
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--x", type=int, default=-1)
     ap.add_argument("--y", type=int, default=100)
@@ -1182,6 +1422,17 @@ def main() -> int:
     ap.add_argument("--state", default="", help="ann_dashboard 状态文件")
     ap.add_argument("--reset", action="store_true", help="忽略并重置配置")
     args = ap.parse_args()
+    # 预热 flyaim 导入(主线程):worker 线程里首次导入会和 tkinter 主循环
+    # 竞争模块导入锁,实测直接卡死(2026-10-05)。预热后 worker 只查 sys.modules。
+    try:
+        import flyaim.bridge.capture  # noqa: F401
+        import flyaim.bridge.controllers  # noqa: F401
+        import flyaim.bridge.gain  # noqa: F401
+        import flyaim.bridge.inject  # noqa: F401
+        import flyaim.baselines.eye_servo  # noqa: F401
+        print("[overlay] flyaim warmed up", flush=True)
+    except Exception as e:
+        print(f"[overlay] flyaim 预热失败(实战模式不可用): {e}", flush=True)
     Overlay(args).run()
     return 0
 
