@@ -252,13 +252,25 @@ function drawCurves(){{
   cctx.fillStyle='#20c060';
   cctx.fillText('random 278px', w-110, ry-6);
 }}
+let _lastFrame = -1, _lastChange = Date.now();
 async function tick(){{
   try{{
     const r = await fetch('/state', {{cache:'no-store'}});
     const j = await r.json();
     if(j && j.ok){{ S = j; }}
-    document.getElementById('conn').textContent = '已连接';
     const f = S.frame||0;
+    // 陈旧检测:训练进程退出后状态会静默冻结,看起来像"坏了"。
+    // 若累计帧数超过 8s 不变,标为"已结束",避免误判。
+    if(f !== _lastFrame){{ _lastFrame = f; _lastChange = Date.now(); }}
+    const staleS = Math.round((Date.now()-_lastChange)/1000);
+    const badge = document.getElementById('conn');
+    if(staleS >= 8 && f > 0){{
+      badge.textContent = '训练已结束 · ' + staleS + 's 无新数据';
+      badge.style.color = '#e0a03c'; badge.style.borderColor = '#a76';
+    }} else {{
+      badge.textContent = '已连接';
+      badge.style.color = ''; badge.style.borderColor = '';
+    }}
     document.getElementById('k_frame').textContent = f.toLocaleString();
     document.getElementById('k_loss').textContent = (S.loss!=null? S.loss.toFixed(4):'—');
     document.getElementById('k_fps').innerHTML = (S.fps!=null? S.fps.toFixed(1):'—')+'<span class="u">f/s</span>';
