@@ -37,7 +37,7 @@ from flyaim.arena.arena import Arena  # noqa: E402
 from flyaim.bridge.capture import ArraySource, ArenaSource, ScreenCapture, centered_region  # noqa: E402
 from flyaim.bridge.controllers import RandomController, SeekController, ZeroController  # noqa: E402
 from flyaim.bridge.detect import DEFAULT_BLUE, annotate, find_target  # noqa: E402
-from flyaim.bridge.gain import GainConfig, GainModel  # noqa: E402
+from flyaim.bridge.gain import ENGINE_COEFS, GainConfig, GainModel  # noqa: E402
 from flyaim.bridge.inject import NullSink, pointer_accel_enabled  # noqa: E402
 from flyaim.bridge.loop import BridgeLoop  # noqa: E402
 from flyaim.config import ArenaConfig  # noqa: E402
@@ -265,6 +265,192 @@ def t9_zero_random() -> None:
         check(f"T9.{name}", s["frames"] == 3 and sink.n_calls == 3)
 
 
+# ---------------------------------------------------------------- 附:增益语义(D26)
+
+def t10_gain_fov_semantics() -> None:
+    """D26:增益的「比例语义」必须随 FOV 走,否则过转 2.50 倍。
+
+    这是被真实查出过的一处标定缺陷(它让恒定量程控制器从"锁定 100%"掉到
+    "锁定 0.3%"),所以把它固化成冒烟项 —— 以后谁再动 gain.py,这里会立刻响。
+    """
+    print("[T10] 增益语义:FOV 一致性与过转倍数")
+    legacy = GainModel(GainConfig(counts_per_360=12598.0))
+    fixed = GainModel(GainConfig(counts_per_360=12598.0, fov_h_deg=103.0))
+    # 旧语义 = speed_fraction × 360
+    check("T10.legacy", abs(legacy.deg_per_action() - 0.021875 * 360.0) < 1e-6,
+          f"旧语义 {legacy.deg_per_action():.3f}°/拍")
+    # 新语义 = speed_fraction × linFOV,linFOV = 2·tan(FOV/2)
+    check("T10.linfov", abs(fixed.cfg.lin_fov_deg - 144.061) < 0.01,
+          f"linFOV={fixed.cfg.lin_fov_deg:.3f}°")
+    check("T10.deg_per_action", abs(fixed.deg_per_action() - 3.1513) < 1e-3,
+          f"FOV=103° -> {fixed.deg_per_action():.4f}°/拍")
+    check("T10.ratio", abs(legacy.deg_per_action() / fixed.deg_per_action() - 2.50) < 0.01,
+          f"过转 {legacy.deg_per_action()/fixed.deg_per_action():.2f} 倍")
+    # counts_per_action 必须与 deg_per_action 自洽(否则注入量与名义角度不符)
+    for g in (legacy, fixed):
+        want = g.deg_per_action() * g.cfg.counts_per_360 / 360.0
+        check("T10.counts_consistent", abs(g.counts_per_action - want) < 1e-6,
+              f"counts_per_action={g.counts_per_action:.2f} vs {want:.2f}")
+    check("T10.fov_validated", _t10_raises(lambda: GainConfig(fov_h_deg=200.0)),
+          "非法 FOV 应被拒绝")
+
+
+def _t10_raises(fn) -> bool:
+    try:
+        fn()
+    except ValueError:
+        return True
+    return False
+
+
+def t11_sens_model() -> None:
+    """路线 B:由「游戏内灵敏度」推 counts_per_360,必须与路线 A 自洽。
+
+    这是 D27 固化的东西:cm/360 **不必在桌面上量**。但三条不变式必须成立,
+    否则标定会以「能跑但系统地偏」的形式悄悄出错(与 D26 的 2.5 倍同族)。
+    """
+    print("[T11] 灵敏度模型:路线 B ↔ 路线 A 互换自洽")
+    # 不变式 1:360 / (sens × yaw_coef) 的定义
+    c = GainConfig.counts_per_360_from_sens(1.5, yaw_coef=0.022)
+    check("T11.def", abs(c - 360.0 / (1.5 * 0.022)) < 1e-6,
+          f"360/(1.5×0.022) = {c:.1f}")
+
+    # 不变式 2:与路线 A 对拍(D=800 时 34.64cm/360 应给出同一个数)
+    a = GainConfig.from_cm360(800.0, 34.64)
+    check("T11.routeA_agree", abs(a.counts_per_360 - 10909.1) / 10909.1 < 3e-3,
+          f"路线A {a.counts_per_360:.0f} vs 路线B {c:.0f}")
+
+    # 不变式 3:「DPI 不进 counts_per_360」—— eDPI 等价
+    #   公式里没有 DPI 项,只有 sens。所以 sens 与 counts/360 严格成反比。
+    #   ⚠️ 注意别把这条写成 "两式相等"(首版就写错了):是**比例**关系。
+    c2 = GainConfig.counts_per_360_from_sens(2.0, yaw_coef=0.022)
+    c1 = GainConfig.counts_per_360_from_sens(1.0, yaw_coef=0.022)
+    check("T11.dpi_free", abs(c1 / c2 - 2.0) < 1e-9,
+          f"sens×2 -> counts/360 ÷2({c2:.0f} vs {c1:.0f});公式无 DPI 项")
+    #   而唯一让 DPI 重新进来的是 dpi_scale(游戏内归一化),它必须线性可乘。
+    c1s = GainConfig.counts_per_360_from_sens(1.0, yaw_coef=0.022, dpi_scale=0.5)
+    check("T11.scale_linear", abs(c1s / c1 - 2.0) < 1e-9,
+          f"dpi_scale 与 counts/360 成反比,系数恰为 1/scale({c1s:.0f} vs {c1:.0f});"
+          "这是 DPI 影响结果的唯一通道")
+
+    # 不变式 4:幂等互逆 —— A->B->A 必须回到原点
+    r = GainConfig.sens_for_cm360(800.0, 40.0, yaw_coef=0.022)
+    back = GainConfig.cm360_from_sens(r, 800.0, yaw_coef=0.022)
+    check("T11.roundtrip", abs(back - 40.0) < 1e-9,
+          f"40cm/360 -> sens {r:.4f} -> {back:.6f}cm/360")
+
+    # 不变式 5:Aim Lab 高 DPI 缩放:3200 模式计数被归一化,过转 4 倍
+    hi = GainConfig.counts_per_360_from_sens(1.5, dpi_scale=800.0 / 3200.0,
+                                             yaw_coef=0.022)
+    check("T11.dpi_scale", abs(hi / c - 4.0) < 1e-9,
+          f"3200DPI 归一化 -> counts×4(过转 {hi/c:.1f} 倍)")
+
+    # 不变式 6:未知 engine 必须报错,不能静默退默认
+    check("T11.engine_validated",
+          _t10_raises(lambda: GainConfig.from_sens(1.0, engine="csgo_but_typo")),
+          "未知引擎应被拒绝")
+    check("T11.sens_pos", _t10_raises(lambda: GainConfig.from_sens(0.0)),
+          "sens=0 应被拒绝")
+
+    # 不变式 7:所有内置引擎系数的 counts_per_360 都落在合理量级
+    for k, v in ENGINE_COEFS.items():
+        cc = GainConfig.counts_per_360_from_sens(1.0, engine=k)
+        check(f"T11.{k}", 100.0 < cc < 1e6, f"{k}: sens=1 -> {cc:.0f} counts/360")
+
+
+def t12_pointer_probe() -> None:
+    """D27.5:指针路径探针的判定逻辑(不注入,只测纯函数)。
+
+    探针本身会动鼠标,所以这里只测"给定输入 -> 判定输出"的**纯逻辑**:
+    这是本项目反复吃过亏的地方(判定函数写错 = 假阳性/假阴性),
+    必须能在零副作用下回归。
+    """
+    print("[T12] 指针探针判定逻辑")
+    from flyaim.bridge.pointer_probe import PointerProbe, judge
+
+    def rows(*specs) -> list:
+        return [PointerProbe(sent=(s, 0), moved=(m, 0), ax=0, ay=0)
+                for s, m in specs]
+
+    # 理想:比值恒为 1
+    ok, _ = judge(rows((300, 300), (1200, 1200), (300, 300)))
+    check("T12.linear_ideal", ok, "比值恒 1 应通过")
+
+    # 线性但有固定缩放:比值恒为 2 —— 应通过线性判据但给出缩放告警
+    ok2, lines2 = judge(rows((300, 600), (1200, 2400), (300, 600)))
+    check("T12.scaled_linear", ok2, "恒定比值 2 仍算线性(有缩放告警)")
+
+    # 非线性:本机实测形态(EPP 开)必须被判死
+    ok3, lines3 = judge(rows((300, 981), (1200, 1859), (300, 981)), tol=0.02)
+    check("T12.epp_nonlinear", not ok3, "比值 3.27/1.55 必须判不通过")
+    check("T12.epp_diagnosed",
+          any("非线性" in ln or "变化" in ln for ln in lines3),
+          "应指出非线性")
+
+    # 完全不动:注入未生效
+    ok4, _ = judge(rows((300, 0), (1200, 0)))
+    check("T12.no_move", not ok4, "光标没动应判不通过")
+
+    # 空输入
+    ok5, _ = judge([])
+    check("T12.empty", not ok5, "空输入应判不通过")
+
+    # 比值属性自洽
+    p = PointerProbe(sent=(400, 0), moved=(1000, 0), ax=0, ay=0)
+    check("T12.ratio_prop", abs(p.ratio_x - 2.5) < 1e-9, "ratio_x=2.5")
+    check("T12.ratio_y_none", p.ratio_y is None, "sent_y=0 时 ratio_y=None")
+
+    # describe 可序列化(报告要 json.dump)
+    d = p.describe()
+    check("T12.describe", d["ratio_x"] == 2.5 and d["sent"] == [400, 0],
+          "describe 字段正确")
+
+
+def t13_fov_convention() -> None:
+    """D28:FOV 口径守卫 —— 防止把「游戏设置里的 fov 值」当成渲染 FOV。
+
+    这个坑的特点:数值看着都合理(90 也在 [5,179) 内,不会被校验拦),
+    但会让 deg_per_action 差 33%。所以**必须靠固定数值回归**守住。
+    """
+    print("[T13] FOV 口径守卫 (D28)")
+    import math
+    from flyaim.bridge.gain import GainConfig, GainModel
+
+    C360 = 360.0 / (2.0 * 0.022)      # 8181.818...
+
+    def dpa(fov: float) -> float:
+        cfg = GainConfig(counts_per_360=C360, fov_h_deg=fov)
+        return GainModel(cfg).deg_per_action()
+
+    # CS2@16:9 的渲染 FOV 必须给 106.26,而不是设置里的 90
+    # linFOV(90)=114.592°, linFOV(106.26)=152.788°(角度制)
+    lin90 = 2.0 * math.tan(math.radians(90.0) / 2.0) * 180.0 / math.pi
+    lin106 = 2.0 * math.tan(math.radians(106.26) / 2.0) * 180.0 / math.pi
+    check("T13.lin90", abs(lin90 - 114.592) < 0.01, f"linFOV(90)={lin90:.3f}°")
+    check("T13.lin106", abs(lin106 - 152.788) < 0.01, f"linFOV(106.26)={lin106:.3f}°")
+
+    # deg_per_action 与 FOV 单调正相关,且两条已知值必须命中
+    a90, a106 = dpa(90.0), dpa(106.26)
+    check("T13.dpa90", abs(a90 - 2.5067) < 1e-3, f"FOV=90 -> {a90:.4f}°/action")
+    check("T13.dpa106", abs(a106 - 3.3422) < 1e-3, f"FOV=106.26 -> {a106:.4f}°/action")
+
+    # 误填 90 的相对误差应是 -25%(=1 - 114.592/152.788)
+    rel = a90 / a106 - 1.0
+    check("T13.misconfig_25pct", abs(rel + 0.25) < 2e-3,
+          f"照界面填 90 会少转 {abs(rel):.1%}")
+
+    # 106.26 必须严格大于 90 —— 守住"Valve 按纵横比放大"这个事实
+    check("T13.valve_expand", a106 > a90 * 1.3,
+          "CS2 渲染 FOV 应比 fov 值大 30% 以上")
+
+    # 两个语义必须分开:counts_per_360 与 FOV 完全无关
+    c1 = GainModel(GainConfig(counts_per_360=C360, fov_h_deg=90.0))
+    c2 = GainModel(GainConfig(counts_per_360=C360, fov_h_deg=106.26))
+    check("T13.fov_free_c360",
+          c1.cfg.counts_per_360 == c2.cfg.counts_per_360,
+          "counts_per_360 不应随 FOV 变化(核心等式里没有 FOV)")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--screen", action="store_true", help="加测真实屏幕捕获(只读)")
@@ -282,6 +468,10 @@ def main() -> int:
     t5_arena_loop()
     t6_detect()
     t9_zero_random()
+    t10_gain_fov_semantics()
+    t11_sens_model()
+    t12_pointer_probe()
+    t13_fov_convention()
     if args.screen:
         t7_screen()
     if args.cursor_check:

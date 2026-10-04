@@ -1,0 +1,834 @@
+{
+  "config": {
+    "seconds": 20.0,
+    "cm360": 40.0,
+    "dpi": 800.0,
+    "target_ang_deg": 11.0,
+    "fov": 103.0,
+    "eye": "24x32",
+    "respawn": false,
+    "out": ""
+  },
+  "sim": {
+    "width": 640,
+    "height": 480,
+    "fov_h_deg": 103.0,
+    "target_color": [
+      48,
+      224,
+      224
+    ],
+    "crosshair_color": [
+      240,
+      60,
+      60
+    ],
+    "bg_color": [
+      26,
+      26,
+      32
+    ],
+    "dot_color": [
+      120,
+      120,
+      132
+    ],
+    "gun_color": [
+      150,
+      55,
+      55
+    ],
+    "target_ang_deg": 11.0,
+    "spawn_ang_deg": [
+      6.0,
+      34.0
+    ],
+    "respawn_on_hit": false,
+    "draw_crosshair": true,
+    "draw_gun": true,
+    "dot_step_deg": 9.0,
+    "dot_span_deg": 72.0,
+    "seed": 0
+  },
+  "gain": {
+    "counts_per_360": 12598.425196850394,
+    "speed_fraction_per_action": 0.021875,
+    "fov_h_deg": 103.0,
+    "max_counts_per_tick": 600.0,
+    "invert_x": false,
+    "invert_y": false,
+    "deadzone": 0.0,
+    "counts_per_action": 110.28,
+    "deg_per_count": 0.028575,
+    "deg_per_action": 3.1513,
+    "lin_fov_deg": 144.061,
+    "semantics": "action=1.0 使靶在画面中心移动 speed_fraction×W 像素(与离线靶场 14px/640px 同语义);角度量 = speed_fraction×linFOV,linFOV=2tan(FOV/2) 是中心处 px/度 的线性化。透视边缘偏差见 DECISIONS D26 的 px/度 实测。"
+  },
+  "gain_legacy": {
+    "counts_per_360": 12598.425196850394,
+    "speed_fraction_per_action": 0.021875,
+    "fov_h_deg": null,
+    "max_counts_per_tick": 600.0,
+    "invert_x": false,
+    "invert_y": false,
+    "deadzone": 0.0,
+    "counts_per_action": 275.59,
+    "deg_per_count": 0.028575,
+    "deg_per_action": 7.875,
+    "lin_fov_deg": null,
+    "semantics": "⚠️ 未指定 fov_h_deg:按旧语义 action=1 扫过整圈的 speed_fraction(deg_per_action = speed_fraction×360)。若 FOV≈103°,这比「扫过画面宽度的同一比例」过转 2.50 倍,一拍就把靶推过中心 35px —— 上线前务必显式给 --fov。"
+  },
+  "positive": {
+    "n_ticks": 944,
+    "tick_hz": 47.18,
+    "err_mean_deg": 0.8502973516949153,
+    "err_p50_deg": 0.97465,
+    "err_p95_deg": 1.9272,
+    "lock_frac": 0.996822033898305,
+    "post_lock_frac": 1.0,
+    "post_lock_max_deg": 4.8257,
+    "first_lock_tick": 3,
+    "on_screen_frac": 1.0,
+    "n_respawns": 1,
+    "px_per_deg_center": 4.442552235031311,
+    "px_per_deg_mean": 4.467151012379892,
+    "px_per_deg_p95": 4.520795660036166,
+    "act_p50_ms": 19.652,
+    "capture_age_p95_ms": 4.304,
+    "ctrl": {
+      "name": "eye",
+      "chroma_channel": "r8",
+      "aim_mode": "center",
+      "search": "scan",
+      "v_px": 14.0,
+      "eye_grid": [
+        24,
+        32
+      ],
+      "n_receptors": 6098,
+      "retinotopy": "block_index(无可用小眼坐标的确定性块映射,无生物学含义)",
+      "n_no_target": 0,
+      "n_no_aim": 0
+    }
+  },
+  "negative": {
+    "chroma=r7(用长波找青靶)": {
+      "n_ticks": 1074,
+      "tick_hz": 53.66,
+      "err_mean_deg": 92.58984581005586,
+      "err_p50_deg": 93.6853,
+      "err_p95_deg": 93.6853,
+      "lock_frac": 0.0,
+      "post_lock_frac": 0.0,
+      "post_lock_max_deg": 93.6853,
+      "first_lock_tick": -1,
+      "on_screen_frac": 0.0111731843575419,
+      "n_respawns": 1,
+      "px_per_deg_center": 4.442552235031311,
+      "px_per_deg_mean": 44.77006330954353,
+      "px_per_deg_p95": 45.178592586030035,
+      "act_p50_ms": 17.756,
+      "capture_age_p95_ms": 2.968,
+      "ctrl": {
+        "name": "eye",
+        "chroma_channel": "r7",
+        "aim_mode": "center",
+        "search": "scan",
+        "v_px": 14.0,
+        "eye_grid": [
+          24,
+          32
+        ],
+        "n_receptors": 6098,
+        "retinotopy": "block_index(无可用小眼坐标的确定性块映射,无生物学含义)",
+        "n_no_target": 0,
+        "n_no_aim": 0
+      }
+    },
+    "search=none(看不到靶就停住)": {
+      "n_ticks": 1060,
+      "tick_hz": 52.99,
+      "err_mean_deg": 0.8461556603773585,
+      "err_p50_deg": 0.9628,
+      "err_p95_deg": 1.9272,
+      "lock_frac": 0.9971698113207547,
+      "post_lock_frac": 1.0,
+      "post_lock_max_deg": 4.8257,
+      "first_lock_tick": 3,
+      "on_screen_frac": 1.0,
+      "n_respawns": 1,
+      "px_per_deg_center": 4.442552235031311,
+      "px_per_deg_mean": 4.467249149098416,
+      "px_per_deg_p95": 4.520795660036166,
+      "act_p50_ms": 17.676,
+      "capture_age_p95_ms": 3.924,
+      "ctrl": {
+        "name": "eye",
+        "chroma_channel": "r8",
+        "aim_mode": "center",
+        "search": "none",
+        "v_px": 14.0,
+        "eye_grid": [
+          24,
+          32
+        ],
+        "n_receptors": 6098,
+        "retinotopy": "block_index(无可用小眼坐标的确定性块映射,无生物学含义)",
+        "n_no_target": 0,
+        "n_no_aim": 0
+      }
+    },
+    "旧增益语义(不指定 FOV)": {
+      "n_ticks": 1053,
+      "tick_hz": 52.62,
+      "err_mean_deg": 2.3675615384615387,
+      "err_p50_deg": 2.3561,
+      "err_p95_deg": 2.4415,
+      "lock_frac": 0.9990503323836657,
+      "post_lock_frac": 1.0,
+      "post_lock_max_deg": 3.915,
+      "first_lock_tick": 1,
+      "on_screen_frac": 1.0,
+      "n_respawns": 1,
+      "px_per_deg_center": 4.442552235031311,
+      "px_per_deg_mean": 4.4444202658407965,
+      "px_per_deg_p95": 4.446045604814784,
+      "act_p50_ms": 17.842,
+      "capture_age_p95_ms": 3.946,
+      "ctrl": {
+        "name": "eye",
+        "chroma_channel": "r8",
+        "aim_mode": "center",
+        "search": "scan",
+        "v_px": 14.0,
+        "eye_grid": [
+          24,
+          32
+        ],
+        "n_receptors": 6098,
+        "retinotopy": "block_index(无可用小眼坐标的确定性块映射,无生物学含义)",
+        "n_no_target": 0,
+        "n_no_aim": 0
+      }
+    }
+  },
+  "gain_sweep": [
+    {
+      "mult": 0.5,
+      "n_ticks": 980,
+      "tick_hz": 48.97,
+      "err_mean_deg": 0.8677518367346941,
+      "err_p50_deg": 0.98505,
+      "err_p95_deg": 1.9566,
+      "lock_frac": 0.996938775510204,
+      "post_lock_frac": 1.0,
+      "post_lock_max_deg": 4.8807,
+      "first_lock_tick": 3,
+      "on_screen_frac": 1.0,
+      "n_respawns": 1,
+      "px_per_deg_center": 4.442552235031311,
+      "px_per_deg_mean": 4.456603949043233,
+      "px_per_deg_p95": 4.484304932735426,
+      "act_p50_ms": 19.454,
+      "capture_age_p95_ms": 4.011,
+      "ctrl": {
+        "name": "eye",
+        "chroma_channel": "r8",
+        "aim_mode": "center",
+        "search": "scan",
+        "v_px": 14.0,
+        "eye_grid": [
+          24,
+          32
+        ],
+        "n_receptors": 6098,
+        "retinotopy": "block_index(无可用小眼坐标的确定性块映射,无生物学含义)",
+        "n_no_target": 0,
+        "n_no_aim": 0
+      }
+    },
+    {
+      "mult": 0.75,
+      "n_ticks": 1077,
+      "tick_hz": 53.82,
+      "err_mean_deg": 0.8345832869080779,
+      "err_p50_deg": 0.9101,
+      "err_p95_deg": 1.8614,
+      "lock_frac": 0.9972144846796658,
+      "post_lock_frac": 1.0,
+      "post_lock_max_deg": 4.8612,
+      "first_lock_tick": 3,
+      "on_screen_frac": 1.0,
+      "n_respawns": 1,
+      "px_per_deg_center": 4.442552235031311,
+      "px_per_deg_mean": 4.426576541733132,
+      "px_per_deg_p95": 4.442892446545611,
+      "act_p50_ms": 17.502,
+      "capture_age_p95_ms": 3.798,
+      "ctrl": {
+        "name": "eye",
+        "chroma_channel": "r8",
+        "aim_mode": "center",
+        "search": "scan",
+        "v_px": 14.0,
+        "eye_grid": [
+          24,
+          32
+        ],
+        "n_receptors": 6098,
+        "retinotopy": "block_index(无可用小眼坐标的确定性块映射,无生物学含义)",
+        "n_no_target": 0,
+        "n_no_aim": 0
+      }
+    },
+    {
+      "mult": 1.0,
+      "n_ticks": 1056,
+      "tick_hz": 52.77,
+      "err_mean_deg": 0.8456961174242424,
+      "err_p50_deg": 0.9628,
+      "err_p95_deg": 1.9272,
+      "lock_frac": 0.9971590909090909,
+      "post_lock_frac": 1.0,
+      "post_lock_max_deg": 4.8257,
+      "first_lock_tick": 3,
+      "on_screen_frac": 1.0,
+      "n_respawns": 1,
+      "px_per_deg_center": 4.442552235031311,
+      "px_per_deg_mean": 4.467269269930684,
+      "px_per_deg_p95": 4.520795660036166,
+      "act_p50_ms": 17.846,
+      "capture_age_p95_ms": 3.989,
+      "ctrl": {
+        "name": "eye",
+        "chroma_channel": "r8",
+        "aim_mode": "center",
+        "search": "scan",
+        "v_px": 14.0,
+        "eye_grid": [
+          24,
+          32
+        ],
+        "n_receptors": 6098,
+        "retinotopy": "block_index(无可用小眼坐标的确定性块映射,无生物学含义)",
+        "n_no_target": 0,
+        "n_no_aim": 0
+      }
+    },
+    {
+      "mult": 1.5,
+      "n_ticks": 1005,
+      "tick_hz": 50.23,
+      "err_mean_deg": 0.8375760199004975,
+      "err_p50_deg": 0.947,
+      "err_p95_deg": 1.8989,
+      "lock_frac": 0.9970149253731343,
+      "post_lock_frac": 1.0,
+      "post_lock_max_deg": 4.8318,
+      "first_lock_tick": 3,
+      "on_screen_frac": 1.0,
+      "n_respawns": 1,
+      "px_per_deg_center": 4.442552235031311,
+      "px_per_deg_mean": 4.446545861100111,
+      "px_per_deg_p95": 4.4491525423728815,
+      "act_p50_ms": 19.036,
+      "capture_age_p95_ms": 4.181,
+      "ctrl": {
+        "name": "eye",
+        "chroma_channel": "r8",
+        "aim_mode": "center",
+        "search": "scan",
+        "v_px": 14.0,
+        "eye_grid": [
+          24,
+          32
+        ],
+        "n_receptors": 6098,
+        "retinotopy": "block_index(无可用小眼坐标的确定性块映射,无生物学含义)",
+        "n_no_target": 0,
+        "n_no_aim": 0
+      }
+    },
+    {
+      "mult": 2.0,
+      "n_ticks": 929,
+      "tick_hz": 46.42,
+      "err_mean_deg": 0.839887190527449,
+      "err_p50_deg": 0.9556,
+      "err_p95_deg": 1.899,
+      "lock_frac": 0.9967707212055974,
+      "post_lock_frac": 1.0,
+      "post_lock_max_deg": 4.844,
+      "first_lock_tick": 3,
+      "on_screen_frac": 1.0,
+      "n_respawns": 1,
+      "px_per_deg_center": 4.442552235031311,
+      "px_per_deg_mean": 4.4701970675966525,
+      "px_per_deg_p95": 4.528301886792453,
+      "act_p50_ms": 20.78,
+      "capture_age_p95_ms": 4.218,
+      "ctrl": {
+        "name": "eye",
+        "chroma_channel": "r8",
+        "aim_mode": "center",
+        "search": "scan",
+        "v_px": 14.0,
+        "eye_grid": [
+          24,
+          32
+        ],
+        "n_receptors": 6098,
+        "retinotopy": "block_index(无可用小眼坐标的确定性块映射,无生物学含义)",
+        "n_no_target": 0,
+        "n_no_aim": 0
+      }
+    }
+  ],
+  "bangbang": {
+    "正确(FOV=103°)": {
+      "n_ticks": 1053,
+      "tick_hz": 52.6,
+      "err_mean_deg": 3.1505522317188985,
+      "err_p50_deg": 3.1447,
+      "err_p95_deg": 3.2098,
+      "lock_frac": 1.0,
+      "post_lock_frac": 1.0,
+      "post_lock_max_deg": 5.4771,
+      "first_lock_tick": 0,
+      "on_screen_frac": 1.0,
+      "n_respawns": 1,
+      "px_per_deg_center": 4.442552235031311,
+      "px_per_deg_mean": 4.446079079246824,
+      "px_per_deg_p95": 4.448095027484678,
+      "act_p50_ms": 18.258,
+      "capture_age_p95_ms": 3.931,
+      "ctrl": {
+        "name": "eye",
+        "chroma_channel": "r8",
+        "aim_mode": "center",
+        "search": "scan",
+        "v_px": 14.0,
+        "eye_grid": [
+          24,
+          32
+        ],
+        "n_receptors": 6098,
+        "retinotopy": "block_index(无可用小眼坐标的确定性块映射,无生物学含义)",
+        "n_no_target": 0,
+        "n_no_aim": 0,
+        "mode": "saturate(满量程,不减速)"
+      }
+    },
+    "旧语义(过转 2.5x)": {
+      "n_ticks": 1055,
+      "tick_hz": 52.74,
+      "err_mean_deg": 7.866378104265403,
+      "err_p50_deg": 7.9057,
+      "err_p95_deg": 8.0225,
+      "lock_frac": 0.002843601895734597,
+      "post_lock_frac": 0.002843601895734597,
+      "post_lock_max_deg": 15.0084,
+      "first_lock_tick": 0,
+      "on_screen_frac": 1.0,
+      "n_respawns": 1,
+      "px_per_deg_center": 4.442552235031311,
+      "px_per_deg_mean": 4.463640680503056,
+      "px_per_deg_p95": 4.470752089136491,
+      "act_p50_ms": 17.905,
+      "capture_age_p95_ms": 3.915,
+      "ctrl": {
+        "name": "eye",
+        "chroma_channel": "r8",
+        "aim_mode": "center",
+        "search": "scan",
+        "v_px": 14.0,
+        "eye_grid": [
+          24,
+          32
+        ],
+        "n_receptors": 6098,
+        "retinotopy": "block_index(无可用小眼坐标的确定性块映射,无生物学含义)",
+        "n_no_target": 0,
+        "n_no_aim": 0,
+        "mode": "saturate(满量程,不减速)"
+      }
+    }
+  },
+  "size_sweep": [
+    {
+      "eye": "24x32",
+      "ang_deg": 4.0,
+      "n_ticks": 465,
+      "tick_hz": 46.4,
+      "err_mean_deg": 21.736954193548385,
+      "err_p50_deg": 22.1866,
+      "err_p95_deg": 23.497179999999997,
+      "lock_frac": 0.0,
+      "post_lock_frac": 0.0,
+      "post_lock_max_deg": 23.9014,
+      "first_lock_tick": -1,
+      "on_screen_frac": 1.0,
+      "n_respawns": 1,
+      "px_per_deg_center": 4.442552235031311,
+      "px_per_deg_mean": 4.670743321251335,
+      "px_per_deg_p95": 4.709586268373394,
+      "act_p50_ms": 20.76,
+      "capture_age_p95_ms": 3.592,
+      "ctrl": {
+        "name": "eye",
+        "chroma_channel": "r8",
+        "aim_mode": "center",
+        "search": "scan",
+        "v_px": 14.0,
+        "eye_grid": [
+          24,
+          32
+        ],
+        "n_receptors": 6098,
+        "retinotopy": "block_index(无可用小眼坐标的确定性块映射,无生物学含义)",
+        "n_no_target": 0,
+        "n_no_aim": 0
+      }
+    },
+    {
+      "eye": "24x32",
+      "ang_deg": 7.0,
+      "n_ticks": 502,
+      "tick_hz": 50.1,
+      "err_mean_deg": 4.955391832669323,
+      "err_p50_deg": 4.67565,
+      "err_p95_deg": 6.3846,
+      "lock_frac": 0.0099601593625498,
+      "post_lock_frac": 0.01006036217303823,
+      "post_lock_max_deg": 7.3294,
+      "first_lock_tick": 5,
+      "on_screen_frac": 1.0,
+      "n_respawns": 1,
+      "px_per_deg_center": 4.442552235031311,
+      "px_per_deg_mean": 4.45447251803609,
+      "px_per_deg_p95": 4.460733640322025,
+      "act_p50_ms": 19.111,
+      "capture_age_p95_ms": 3.738,
+      "ctrl": {
+        "name": "eye",
+        "chroma_channel": "r8",
+        "aim_mode": "center",
+        "search": "scan",
+        "v_px": 14.0,
+        "eye_grid": [
+          24,
+          32
+        ],
+        "n_receptors": 6098,
+        "retinotopy": "block_index(无可用小眼坐标的确定性块映射,无生物学含义)",
+        "n_no_target": 0,
+        "n_no_aim": 0
+      }
+    },
+    {
+      "eye": "24x32",
+      "ang_deg": 11.0,
+      "n_ticks": 494,
+      "tick_hz": 49.36,
+      "err_mean_deg": 0.8794447368421052,
+      "err_p50_deg": 0.97465,
+      "err_p95_deg": 1.9272,
+      "lock_frac": 0.9939271255060729,
+      "post_lock_frac": 1.0,
+      "post_lock_max_deg": 4.8257,
+      "first_lock_tick": 3,
+      "on_screen_frac": 1.0,
+      "n_respawns": 1,
+      "px_per_deg_center": 4.442552235031311,
+      "px_per_deg_mean": 4.466545367262907,
+      "px_per_deg_p95": 4.520795660036166,
+      "act_p50_ms": 19.509,
+      "capture_age_p95_ms": 3.957,
+      "ctrl": {
+        "name": "eye",
+        "chroma_channel": "r8",
+        "aim_mode": "center",
+        "search": "scan",
+        "v_px": 14.0,
+        "eye_grid": [
+          24,
+          32
+        ],
+        "n_receptors": 6098,
+        "retinotopy": "block_index(无可用小眼坐标的确定性块映射,无生物学含义)",
+        "n_no_target": 0,
+        "n_no_aim": 0
+      }
+    },
+    {
+      "eye": "24x32",
+      "ang_deg": 16.0,
+      "n_ticks": 471,
+      "tick_hz": 47.06,
+      "err_mean_deg": 0.7275210191082804,
+      "err_p50_deg": 0.8585,
+      "err_p95_deg": 1.0443,
+      "lock_frac": 1.0,
+      "post_lock_frac": 1.0,
+      "post_lock_max_deg": 7.6726,
+      "first_lock_tick": 0,
+      "on_screen_frac": 1.0,
+      "n_respawns": 1,
+      "px_per_deg_center": 4.442552235031311,
+      "px_per_deg_mean": 4.453345784872901,
+      "px_per_deg_p95": 4.480457578646329,
+      "act_p50_ms": 20.214,
+      "capture_age_p95_ms": 4.201,
+      "ctrl": {
+        "name": "eye",
+        "chroma_channel": "r8",
+        "aim_mode": "center",
+        "search": "scan",
+        "v_px": 14.0,
+        "eye_grid": [
+          24,
+          32
+        ],
+        "n_receptors": 6098,
+        "retinotopy": "block_index(无可用小眼坐标的确定性块映射,无生物学含义)",
+        "n_no_target": 0,
+        "n_no_aim": 0
+      }
+    },
+    {
+      "eye": "48x64",
+      "ang_deg": 4.0,
+      "n_ticks": 471,
+      "tick_hz": 47.0,
+      "err_mean_deg": 5.242631634819532,
+      "err_p50_deg": 5.3591,
+      "err_p95_deg": 9.796800000000001,
+      "lock_frac": 0.15286624203821655,
+      "post_lock_frac": 0.1535181236673774,
+      "post_lock_max_deg": 12.2294,
+      "first_lock_tick": 2,
+      "on_screen_frac": 1.0,
+      "n_respawns": 1,
+      "px_per_deg_center": 4.442552235031311,
+      "px_per_deg_mean": 4.456665087794653,
+      "px_per_deg_p95": 4.482742174760988,
+      "act_p50_ms": 20.421,
+      "capture_age_p95_ms": 1.61,
+      "ctrl": {
+        "name": "eye",
+        "chroma_channel": "r8",
+        "aim_mode": "center",
+        "search": "scan",
+        "v_px": 14.0,
+        "eye_grid": [
+          48,
+          64
+        ],
+        "n_receptors": 6098,
+        "retinotopy": "block_index(无可用小眼坐标的确定性块映射,无生物学含义)",
+        "n_no_target": 87,
+        "n_no_aim": 0
+      }
+    },
+    {
+      "eye": "48x64",
+      "ang_deg": 7.0,
+      "n_ticks": 473,
+      "tick_hz": 47.28,
+      "err_mean_deg": 2.3924052854122624,
+      "err_p50_deg": 2.1019,
+      "err_p95_deg": 4.7844,
+      "lock_frac": 0.6701902748414377,
+      "post_lock_frac": 0.6716101694915254,
+      "post_lock_max_deg": 6.9847,
+      "first_lock_tick": 1,
+      "on_screen_frac": 1.0,
+      "n_respawns": 1,
+      "px_per_deg_center": 4.442552235031311,
+      "px_per_deg_mean": 4.4448784037724,
+      "px_per_deg_p95": 4.451968898921495,
+      "act_p50_ms": 20.474,
+      "capture_age_p95_ms": 3.805,
+      "ctrl": {
+        "name": "eye",
+        "chroma_channel": "r8",
+        "aim_mode": "center",
+        "search": "scan",
+        "v_px": 14.0,
+        "eye_grid": [
+          48,
+          64
+        ],
+        "n_receptors": 6098,
+        "retinotopy": "block_index(无可用小眼坐标的确定性块映射,无生物学含义)",
+        "n_no_target": 0,
+        "n_no_aim": 0
+      }
+    },
+    {
+      "eye": "48x64",
+      "ang_deg": 11.0,
+      "n_ticks": 484,
+      "tick_hz": 48.37,
+      "err_mean_deg": 0.9512890495867768,
+      "err_p50_deg": 0.94845,
+      "err_p95_deg": 1.2077,
+      "lock_frac": 1.0,
+      "post_lock_frac": 1.0,
+      "post_lock_max_deg": 5.4813,
+      "first_lock_tick": 0,
+      "on_screen_frac": 1.0,
+      "n_respawns": 1,
+      "px_per_deg_center": 4.442552235031311,
+      "px_per_deg_mean": 4.442382448370261,
+      "px_per_deg_p95": 4.446620959843291,
+      "act_p50_ms": 19.99,
+      "capture_age_p95_ms": 4.278,
+      "ctrl": {
+        "name": "eye",
+        "chroma_channel": "r8",
+        "aim_mode": "center",
+        "search": "scan",
+        "v_px": 14.0,
+        "eye_grid": [
+          48,
+          64
+        ],
+        "n_receptors": 6098,
+        "retinotopy": "block_index(无可用小眼坐标的确定性块映射,无生物学含义)",
+        "n_no_target": 0,
+        "n_no_aim": 0
+      }
+    },
+    {
+      "eye": "48x64",
+      "ang_deg": 16.0,
+      "n_ticks": 479,
+      "tick_hz": 47.81,
+      "err_mean_deg": 0.6895160751565761,
+      "err_p50_deg": 0.8253,
+      "err_p95_deg": 1.085,
+      "lock_frac": 1.0,
+      "post_lock_frac": 1.0,
+      "post_lock_max_deg": 5.4771,
+      "first_lock_tick": 0,
+      "on_screen_frac": 1.0,
+      "n_respawns": 1,
+      "px_per_deg_center": 4.442552235031311,
+      "px_per_deg_mean": 4.432796868914622,
+      "px_per_deg_p95": 4.4468678056464315,
+      "act_p50_ms": 19.975,
+      "capture_age_p95_ms": 4.807,
+      "ctrl": {
+        "name": "eye",
+        "chroma_channel": "r8",
+        "aim_mode": "center",
+        "search": "scan",
+        "v_px": 14.0,
+        "eye_grid": [
+          48,
+          64
+        ],
+        "n_receptors": 6098,
+        "retinotopy": "block_index(无可用小眼坐标的确定性块映射,无生物学含义)",
+        "n_no_target": 0,
+        "n_no_aim": 0
+      }
+    }
+  ],
+  "recapture": {
+    "search=none(停在原地)": {
+      "n_ticks": 2022,
+      "tick_hz": 50.55,
+      "err_mean_deg": 73.75379999999998,
+      "err_p50_deg": 73.7538,
+      "err_p95_deg": 73.7538,
+      "lock_frac": 0.0,
+      "post_lock_frac": 0.0,
+      "post_lock_max_deg": 73.7538,
+      "first_lock_tick": -1,
+      "on_screen_frac": 0.0,
+      "n_respawns": 1,
+      "px_per_deg_center": 4.442552235031311,
+      "px_per_deg_mean": 6.480479649862109,
+      "px_per_deg_p95": 6.480479649862109,
+      "act_p50_ms": 19.083,
+      "capture_age_p95_ms": 2.022,
+      "ctrl": {
+        "name": "eye",
+        "chroma_channel": "r8",
+        "aim_mode": "center",
+        "search": "none",
+        "v_px": 14.0,
+        "eye_grid": [
+          24,
+          32
+        ],
+        "n_receptors": 6098,
+        "retinotopy": "block_index(无可用小眼坐标的确定性块映射,无生物学含义)",
+        "n_no_target": 2022,
+        "n_no_aim": 0
+      }
+    },
+    "search=scan(扫掠)": {
+      "n_ticks": 2235,
+      "tick_hz": 55.86,
+      "err_mean_deg": 12.54711606263982,
+      "err_p50_deg": 0.9425,
+      "err_p95_deg": 122.58581999999991,
+      "lock_frac": 0.905592841163311,
+      "post_lock_frac": 1.0,
+      "post_lock_max_deg": 4.3814,
+      "first_lock_tick": 211,
+      "on_screen_frac": 0.9131991051454139,
+      "n_respawns": 1,
+      "px_per_deg_center": 4.442552235031311,
+      "px_per_deg_mean": 6.387695625652911,
+      "px_per_deg_p95": 6.837222439996995,
+      "act_p50_ms": 16.877,
+      "capture_age_p95_ms": 3.701,
+      "ctrl": {
+        "name": "eye",
+        "chroma_channel": "r8",
+        "aim_mode": "center",
+        "search": "scan",
+        "v_px": 14.0,
+        "eye_grid": [
+          24,
+          32
+        ],
+        "n_receptors": 6098,
+        "retinotopy": "block_index(无可用小眼坐标的确定性块映射,无生物学含义)",
+        "n_no_target": 195,
+        "n_no_aim": 0
+      }
+    }
+  },
+  "projection": [
+    {
+      "deg": 5.0,
+      "px": 22.27,
+      "px_per_deg": 4.454
+    },
+    {
+      "deg": 10.0,
+      "px": 44.88,
+      "px_per_deg": 4.488
+    },
+    {
+      "deg": 20.0,
+      "px": 92.64,
+      "px_per_deg": 4.632
+    },
+    {
+      "deg": 30.0,
+      "px": 146.96,
+      "px_per_deg": 4.899
+    },
+    {
+      "deg": 40.0,
+      "px": 213.58,
+      "px_per_deg": 5.34
+    }
+  ]
+}

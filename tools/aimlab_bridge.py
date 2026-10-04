@@ -44,6 +44,7 @@ from flyaim.bridge import (  # noqa: E402
     ArenaSource,
     ArraySource,
     BridgeLoop,
+    EyeController,
     FlyController,
     GainConfig,
     GainModel,
@@ -69,8 +70,24 @@ CAL_NORM = "indeg"
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="FlyAim -> Aim Lab 桥接")
     ap.add_argument("--controller", default="seek",
-                    choices=["fly", "seek", "random", "zero"],
-                    help="fly=连接组;seek=纯视觉PD(管道校验,非实验臂);random;zero")
+                    choices=["fly", "seek", "eye", "random", "zero"],
+                    help="fly=连接组(阴性);eye=复眼视觉伺服(保留 6098 感光细胞,"
+                         "绕过连接组,D25);seek=纯视觉PD(管道校验);random;zero")
+    ap.add_argument("--fov", type=float, default=103.0,
+                    help="**渲染视野的水平 FOV**(不是游戏设置里那个 fov 值!)。"
+                         "**必须准**:不给/给错会让增益语义差 1.25~1.33 倍(见 D28)。"
+                         "速查:CS2/CS:GO@16:9=106.26,Valorant=103,Apex=按竖直FOV换算。")
+    ap.add_argument("--target-hue", default="auto", choices=["auto", "red", "cyan"],
+                    help="eye 用哪条色觉通路:red->R7(长波),cyan->R8(短波)。"
+                         "auto 按 --target-color 自动判定(红靶 r7,青/绿靶 r8)")
+    ap.add_argument("--eye", default="24x32",
+                    help="eye 的复眼网格 rows x cols(密度决定角分辨率;"
+                         "上限受 R1-R6 感光细胞数 3,377 约束,最大约 58x58)")
+    ap.add_argument("--eye-aim", default="center", choices=["center", "detect"],
+                    help="eye 的瞄准点:center=准星钉在画面中心(真实FPS);"
+                         "detect=检测画面里的准星(2D 靶场)")
+    ap.add_argument("--eye-search", default="scan", choices=["scan", "none"],
+                    help="eye 看不到靶时:scan=扫掠搜索(实战必需);none=停住")
     ap.add_argument("--source", default="arena", choices=["arena", "screen", "array"],
                     help="arena=自建靶场(无头彩排);screen=真实屏幕;array=内置合成帧")
     ap.add_argument("--region", default=None,
@@ -107,6 +124,10 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--live", action="store_true", help="写遥测 JSONL(live_view/live_web 可看)")
     ap.add_argument("--tag", default="bridge", help="运行目录标签")
     ap.add_argument("--array-frames", type=int, default=30, help="array 源的合成帧数")
+    ap.add_argument("--arena-no-respawn", action="store_true",
+                    help="arena 源:命中后不重置靶位(靶不动)。这样量到的才是"
+                         "「稳靶率」;默认 respawn=True 时命中率上限只有 ~5%,"
+                         "与控制器好坏无关(见 DECISIONS D12/D25)")
     return ap.parse_args()
 
 
@@ -114,16 +135,24 @@ def build_gain(args: argparse.Namespace) -> GainModel:
     """增益来源优先级:--gain-json > --cm360/--dpi > 默认值(打印醒目警告)。"""
     if args.gain_json:
         g = GainModel.load(args.gain_json)
-        print(f"  增益: 载入 {args.gain_json} (counts_per_360={g.cfg.counts_per_360:.0f})")
+        print(f"  增益: 载入 {args.gain_json} (counts_per_360={g.cfg.counts_per_360:.0f}, "
+              f"每拍满量程 {g.deg_per_action():.2f}°)")
+        if g.cfg.fov_h_deg is None:
+            print("  🔴 该 gain.json 没有记录 FOV —— deg_per_action 用的是旧语义"
+                  "(speed_fraction×360)。若 FOV≈103° 会过转 2.5 倍。")
+            print("     请用 tools/aimlab_gain.py --fov <你的FOV> 重新生成。")
         return g
     if args.cm360 and args.dpi:
         g = GainModel(GainConfig.from_cm360(args.dpi, args.cm360,
+                                            fov_h_deg=args.fov,
                                             max_counts_per_tick=args.max_counts,
                                             invert_x=args.invert_x, invert_y=args.invert_y))
         print(f"  增益: 由 {args.dpi} DPI × {args.cm360} cm/360 推导 "
-              f"(counts_per_360={g.cfg.counts_per_360:.0f})")
+              f"(counts_per_360={g.cfg.counts_per_360:.0f}, "
+              f"FOV={args.fov}° -> 每拍满量程 {g.deg_per_action():.2f}°)")
         return g
-    g = GainModel(GainConfig(max_counts_per_tick=args.max_counts,
+    g = GainModel(GainConfig(fov_h_deg=args.fov,
+                             max_counts_per_tick=args.max_counts,
                              invert_x=args.invert_x, invert_y=args.invert_y))
     print("  ⚠️ 增益未标定:使用默认 counts_per_360=12000(约 800DPI×38cm)。")
     print("     正式跑之前务必用 tools/aimlab_gain.py 生成并核对 gain.json!")
@@ -136,6 +165,7 @@ def build_source(args: argparse.Namespace):
         from flyaim.config import ArenaConfig
 
         cfg = ArenaConfig()
+        cfg.respawn_on_hit = not bool(args.arena_no_respawn)
         return ArenaSource(Arena(cfg, seed=0), closed_loop=True)
     if args.source == "screen":
         region = None
@@ -184,10 +214,27 @@ def build_controller(args: argparse.Namespace):
         print(f"  fly: {type(system.brain).__name__} device={system.device} "
               f"(装配 {time.perf_counter()-t0:.0f}s);读出权重 {READOUT.name}")
         return FlyController(system)
-    if args.controller == "seek":
+    if args.controller == "eye":
         tc = tuple(int(x) for x in args.target_color.split(","))
-        return SeekController(ref_color=tc, tolerance=args.target_tolerance,
-                              use_aim_detect=not args.no_aim_detect)
+        if args.target_hue == "auto":
+            # R(0) > G(1) -> 偏红 -> 长波 R7 通路;否则偏青/绿 -> 短波 R8 通路
+            chroma = "r7" if int(tc[0]) >= int(tc[1]) else "r8"
+        else:
+            chroma = "r7" if args.target_hue == "red" else "r8"
+        er, ec = (int(v) for v in args.eye.lower().split("x"))
+        from flyaim.baselines.eye_servo import make_eye_servo
+        from flyaim.retina.encoder import Retina  # noqa: F401  (触发依赖检查)
+
+        t0 = time.perf_counter()
+        arm = make_eye_servo(str(D), retina_cfg=RetinaConfig(eye_rows=er, eye_cols=ec),
+                             v_px=14.0, cell_px=640.0 / max(1, ec),
+                             chroma=chroma, aim_mode=args.eye_aim,
+                             search=args.eye_search)
+        print(f"  eye: 复眼 {er}x{ec}(小眼接受角 {640.0/ec:.1f}px)"
+              f" 色觉通路 {chroma.upper()}(靶色 {tc}) 瞄准点 {args.eye_aim}"
+              f" 搜索 {args.eye_search}(装配 {time.perf_counter()-t0:.1f}s,"
+              f"{arm.retina.input_neuron_ids.size} 个感光细胞)")
+        return EyeController(arm)
     if args.controller == "random":
         return RandomController(seed=0)
     return ZeroController()

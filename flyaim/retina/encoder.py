@@ -640,6 +640,59 @@ class Retina:
 
     # ------------------------------------------------------------------ 诊断
 
+    # ------------------------------------------------------------------ 空间读出
+
+    def receptor_maps(self, drive: np.ndarray, channel: int = 0) -> dict:
+        """把 `frame_to_spikes` 的输出**铺回小眼网格**,得到视网膜的空间图。
+
+        为什么这是成立的(而不是又一次瞎猜):
+        `_make_cells` 的块映射 `cell = i * n_om // count` 对 i 单调且全覆盖
+        (实测 R1-R6 = 3,377 个 > 768 个小眼),于是
+        `drive[rows_g][k] == exc_g[cell_g[k]]` 存在唯一的逆 —— 把驱动散射
+        回 cell 下标即可**逐位还原**编码器内部那张 (eye_rows, eye_cols) 图。
+        即:复眼的**真实六边形几何**确实丢了(那是 `_make_cells` 的诚实降级),
+        但**光栅空间结构没有丢**,它是可还原的。
+
+        返回 {"lum", "r7", "r8"},各自 (eye_rows, eye_cols) float32:
+            lum: R1-R6 的照度兴奋驱动(最亮的东西 = 白色准星)
+            r7 : 长波(红)兴奋驱动  —— 靶是红的 → 只有靶为正
+            r8 : 短波(绿)兴奋驱动
+
+        channel: 取 drive 的第几列(0=兴奋/ON,1=抑制/OFF)。
+        """
+        d = np.asarray(drive, dtype=np.float32)
+        if d.ndim != 2 or d.shape[0] != int(self.input_neuron_ids.size):
+            raise ValueError(
+                f"drive 形状 {d.shape} 与 input_neuron_ids({self.input_neuron_ids.size}) 不符"
+            )
+        col = int(channel)
+        r, c = self.eye_rows, self.eye_cols
+        out: dict[str, np.ndarray] = {}
+        for key, rows, cells in (
+            ("lum", self._rows_lum, self._cell_lum),
+            ("r7", self._rows_r7, self._cell_r7),
+            ("r8", self._rows_r8, self._cell_r8),
+        ):
+            m = np.zeros(self.n_ommatidia, dtype=np.float32)
+            if rows.size:
+                # 同一 cell 的多个感光细胞数值必然相同(同一个 exc[cell]),
+                # 所以"后写覆盖"与"取第一个"等价。
+                m[cells] = d[rows, col]
+            out[key] = m.reshape(r, c).copy()
+        return out
+
+    @staticmethod
+    def centroid(w: np.ndarray) -> tuple[float, float] | None:
+        """加权质心 (col, row);权重全零时返回 None。"""
+        s = float(w.sum())
+        if s <= 1e-9:
+            return None
+        r = np.arange(w.shape[0], dtype=np.float64)[:, None]
+        c = np.arange(w.shape[1], dtype=np.float64)[None, :]
+        return (float((w * c).sum() / s), float((w * r).sum() / s))
+
+    # ------------------------------------------------------------------ 诊断
+
     def drive_stats(self, drive: np.ndarray) -> dict:
         """单帧驱动统计量,便于标定与报告。"""
         d = np.asarray(drive, dtype=np.float32)

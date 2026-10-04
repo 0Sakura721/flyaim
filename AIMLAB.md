@@ -57,8 +57,9 @@
 | 工具 | 用途 |
 |---|---|
 | `tools/aimlab_bridge.py` | 主入口:三种模式(见下) |
-| `tools/aimlab_gain.py` | 增益标定(cm/360 × DPI → counts/360),写 gain.json |
-| `tools/aimlab_smoke.py` | 30 项冒烟检查(零依赖 GPU/游戏/注入) |
+| `tools/aimlab_gain.py` | 增益标定(灵敏度/cm/360 → counts/360,见 D27),写 gain.json |
+| `tools/aimlab_calibrate.py` | 端到端定标向导:3 个数 → counts/360 + 指针探针 + 可选游戏内校验 + PASS/FAIL |
+| `tools/aimlab_smoke.py` | 64 项冒烟检查(零依赖 GPU/游戏/注入) |
 
 ---
 
@@ -147,15 +148,16 @@ Phase B 验收清单:
 #      增量,大概率不受影响 —— 以 Phase C 实测为准;
 #    - 若受影响,增益随注入速度非线性:标定必须在意向工作幅度附近做,
 #      bridge_summary.json 已自动记录 pointer_accel_enabled 状态。
-# 1) 生成增益
-& $py tools/aimlab_gain.py --from-cm360 800 40 --fov 103
+# 1) 生成增益(D27:也可用 --from-sens <sens> --engine aimlab,不必量桌面)
+& $py tools/aimlab_gain.py --from-sens 2 --engine aimlab --aimlab-dpi 800 --fov 106.26
 # 2) 光标微移注入自检(动 3px 后自动复位)
 & $py tools/aimlab_smoke.py --cursor-check
 # 3) 真实注入先小幅试方向(可临时 --max-counts 150)
 & $py tools/aimlab_bridge.py --controller seek --source screen --sink sendinput --gain-json flyaim/runs/bridge/gain.json --frames 120
 ```
 - [ ] 方向:准星朝靶动的方向与检测误差一致;不对用 `--invert-x/y` 修;
-- [ ] 量 cm/360(游戏内转一整圈量桌面位移)重算 gain.json;
+- [ ] 标定 gain.json:路线 B(`--from-sens --engine --aimlab-dpi`,不必量桌面)或
+  路线 A(`--from-cm360`),两条对拍后取一致值 —— 见 D27;
 - [ ] seek 在真实游戏里能命中(它偷看答案,只作管道验收,**不得进判定**)。
 
 ### Phase D — fly 闭环科学实验
@@ -230,8 +232,7 @@ $env:PYTHONIOENCODING = "utf-8"
 & $py tools/aimlab_smoke.py                    # 冒烟(离线,30 项)
 & $py tools/aimlab_smoke.py --screen           # + 真实截屏 5 帧(只读)
 & $py tools/aimlab_smoke.py --cursor-check     # + 光标微移注入(显式)
-& $py tools/aimlab_gain.py --from-cm360 800 40 # 增益标定 → flyaim/runs/bridge/gain.json
-& $py tools/aimlab_bridge.py --controller fly --source arena --frames 50   # 无头彩排
+& $py tools/aimlab_gain.py --from-sens 2 --engine aimlab --fov 106.26  # 增益标定(D27/D28)→ gain.json& $py tools/aimlab_bridge.py --controller fly --source arena --frames 50   # 无头彩排
 & $py tools/aimlab_bridge.py --controller seek --source screen --frames 300 --live  # 管道校验
 & $py tools/aimlab_bridge.py --controller fly --source screen --sink sendinput --gain-json flyaim/runs/bridge/gain.json --live  # 真实闭环
 & $py tools/live_web.py --dir flyaim/runs/<ts>-bridge/live   # 实时可视化
@@ -259,3 +260,115 @@ CSR kernel(`flyaim/gpu/csr_spmm.py`)承担。TBPTT 长度 `--tbptt` 控制显存
 **结论提醒**:GPU 只改吞吐,**不改科学结论**。A2 战役(第六体制)在 GPU 上
 重跑后 real 375.6px 仍劣于 random 286.5px(C-G1/G2 失败;C-G3 效应仅 2.4px,
 名义显著而实际无意义)。
+
+---
+
+## 10. Phase E — 复眼视觉伺服接入实战(DECISIONS D26)
+
+> §1–§9 是**连接组**臂接入真实游戏的准备。工程上那套(捕获/注入/增益/闭环)现在
+> 原样复用,但接的控制器换成了 **eye-servo**:保留 6,098 个真实复眼感光细胞,
+> 把连接组 + 2 维全局求和读出换成 (24×32) 小眼空间图 + 刹停律(D25)。
+> **它绕过了连接组,因此不得当成果蝇臂**;它回答的是"这个任务对果蝇的眼睛有多难"。
+
+### 10.1 已经做完的(离线,全部零风险)
+
+| 步骤 | 命令 | 结果 |
+|---|---|---|
+| 模拟 FPS 闭环彩排(不动鼠标) | `tools/aimlab_sim3d.py --seconds 20` | 角误差 **0.85°**、锁定后 100%、首达 3 拍 |
+| 经完整桥接管道彩排 | `tools/aimlab_bridge.py --controller eye --source arena --frames 300 --target-color 235,70,70 --eye-aim detect --arena-no-respawn` | 稳靶率 **97.0%**,58.8 Hz |
+| 同一命令(respawn 开) | 去掉 `--arena-no-respawn` | **5.33%** —— 与离线逐位一致,管道零回归 |
+
+模拟器的语义清单(为什么它能替代"先把游戏打开试一下"):针孔投影、准星钉在画面
+中心、相机由**注入计数**驱动、青色靶、世界点阵光流、命中判定按角半径。
+它**不**复刻:真实渲染延迟、鼠标加速度、HUD/枪模遮挡、球的明暗。
+
+### 10.2 🔴 上线前必须知道的三条(都是实测,不是经验)
+
+**(1) `--fov` 不是可选项,而且填哪个数有讲究(见 D28)。**
+`GainModel` 旧实现把"扫过画面宽度的 2.19%"当成"整圈的 2.19%"。FOV=103° 时
+7.875°/拍 vs 正确 3.151°/拍。对带刹停律的 eye 臂只是精度损失(0.85°→2.37°);
+对**恒定量程**的控制器是致命的(锁定 100.0% → **0.3%**)—— 这正是 D19 "一开跑就
+转离靶区 staring at wall"的成因。命令里必须带 `--fov <你的FOV>`。
+
+🔴 **要填的是「渲染视野的水平 FOV」,不是游戏设置里那个 fov 值。**
+这两个数在 Valve 系游戏里**不一样**:
+
+| 游戏 | 设置里的 fov | `--fov` 该填(16:9) |
+|---|---|---|
+| CS2 / CS:GO | 90 | **106.26** |
+| Valorant | — | 103 |
+| Apex | 90(竖直) | 按 `2·atan(tan(v/2)·16/9)` 换算 |
+
+原因是 Valve 的 fov 值恒为 90(与纵横比无关),实际按纵横比放大;90 在 4:3 下
+等于 16:9 的 106.26°。**若照 Aim Lab 界面上的「视野范围 90°」填,每拍少转 33%**
+(2.5067 vs 3.3422 °/action),表现为"收敛慢、总停在靶前面"。
+判据:你的 `speed_fraction` 来自"靶在画面上移了多少**像素比例**",像素↔角度
+必须用渲染 FOV。拿不准就用 Aim Lab 里**把 Game 选成你的游戏**后的那张场景,
+用 `aimlab_probe.py` 量一个已知角直径的靶做标定。
+
+**(2) 任务的靶必须够大 —— 这是能不能接的硬边界。**
+24×32 复眼要靶角直径 **≥ 11°**(半径 5.5°);48×64 降到 **≥ 7°**。
+Aim Lab Gridshot 默认球约 2~3° 角直径,**接不了**。做法:自定义任务把靶调大,
+或站近一点。网格也不能无限加密:R1-R6 只有 3,377 个感光细胞,
+超过 ~58×58 就会有格子分不到细胞、空间图出现空洞,性能反而崩。
+
+**(3) cm/360 不必在桌面上量 —— 用游戏内灵敏度算即可(见 D27)。**
+误差反馈闭环对增益不敏感:乘 0.5x~2x 锁定率都还是 99.7%。它影响的是**稳态残差**
+与抖动。所以 EPP(指针加速)带来的非线性是"精度问题"而非"可行性问题"。
+这意味着**标定的容错带很宽**,你不需要把 cm/360 量得准 —— 但你需要它**不错一个
+数量级的量级**(引擎系数给错 3.2 倍、Aim Lab DPI 缩放漏补 4 倍,都会真的坏掉)。
+
+### 10.3 真机三步(第 3 步才会动鼠标)
+
+**示例参数已按本机实测填好**(CS2 / sens=2 / 800 DPI / 16:9,见 D28):
+
+```bash
+# 解释器:见 README 的 $py 定义
+# --- 第 1 步:定标(只需一次)。用端到端向导,3 个数就够 ---
+#   它会:①算 counts_per_360 ②跑指针路径探针(自动)③可选游戏内手测 ④给 PASS/FAIL
+$py tools/aimlab_calibrate.py --sens 2 --engine aimlab --aimlab-dpi 800 --fov 106.26
+#     --sens 填界面上的灵敏度;--engine aimlab/source(同 0.022)/unreal
+#     --aimlab-dpi 填界面上那个 DPI(高 DPI 模式会自动补缩放,漏补会过转 2~4 倍)
+#     --fov 填**渲染视野**水平 FOV:CS2@16:9 = 106.26(不是界面上的 90!)
+#     --no-probe 可跳过探针(不动鼠标)
+#   也可用 --edpi 1600 --dpi 800(社区 eDPI 口径),或 --cm360 25.9773 --dpi 800
+#   本机结果:counts_per_360 = 8181.8,cm/360 = 25.98cm,判定 PASS
+#
+#   只想要 counts_per_360 不想探针,用老入口:
+$py tools/aimlab_gain.py --from-sens 2 --engine aimlab --fov 106.26
+#
+#   最可信的一层:游戏内手测(注入已知计数 N,量准星移过画面宽度百分比 p)
+$py tools/aimlab_calibrate.py --sens 2 --engine aimlab --fov 106.26 \
+      --verify-counts <你量出的等效 counts/360>
+#   差异 ≤5% 才放行;>5% 会按「加速没关 → 引擎系数 → DPI缩放 → 标称DPI」排查
+
+$py tools/aimlab_smoke.py --cursor-check                 # 光标微移自检(动 3px)
+
+# --- 第 2 步:只看不注入。Aim Lab 进任务内(不是大厅!),无边框窗口 ---
+$py tools/aimlab_probe.py --find aimlab                  # 定位窗口 + 找靶色 + 目检标注图
+$py tools/aimlab_bridge.py --controller eye --source screen --window aimlab \
+      --sink null --fov 106.26 --target-hue auto --eye 24x32 \
+      --eye-aim center --eye-search scan --frames 300 --live
+#   看 runs/<ts>-*/live/preview/ 的检测框:靶有没有被框住、框在哪。
+#   ⚠️ 靶色不是青/红时用 --target-color R,G,B 覆盖
+#   ⚠️ 若遥测里靶检测率 < 90%:说明色觉响应低于门限(6 Hz),即"复眼其实没看见靶",
+#      先目检确认靶色/对比度,再考虑注入
+
+# --- 第 3 步:真实注入(会动鼠标;先小幅度试方向)---
+$py tools/aimlab_bridge.py --controller eye --source screen --window aimlab \
+      --sink sendinput --gain-json flyaim/runs/bridge/gain.json \
+      --fov 106.26 --max-counts 150 --frames 120 --live
+#   方向不对 -> --invert-x / --invert-y
+#   确认方向与幅度后去掉 --max-counts 限制,拉长 --seconds
+```
+
+### 10.4 验收标准与必须随结果报告的四件套
+
+- 验收:`--sink null` 阶段遥测里**靶检测率 ≥ 90%**,且 `act` 方向与检测误差同向;
+  `--sink sendinput` 阶段角误差单调下降并稳定在**靶角半径以内**。
+- 每次运行必须连同以下四项一起报(理由同 §3.1 与 D26.7):
+  **`tick_hz`(拍频)、`capture_age_p95`(画面年龄)、`FOV`、`counts_per_360`(灵敏度)**,
+  外加 `pointer_accel_enabled`(EPP 状态,`bridge_summary.json` 自动记录)。
+- 主指标用**角误差**,不用 hit_rate(理由同 D12:`hit_rate` 无分辨力)。
+- 真机结果与 §10.1 数字的差异应归因于**环境**(渲染延迟/加速度/HUD),
+  而不是控制律 —— 两者已在模拟域分开。

@@ -40,6 +40,7 @@
 
 from flyaim.bridge.capture import ArraySource, ArenaSource, ScreenCapture, centered_region
 from flyaim.bridge.controllers import (
+    EyeController,
     FlyController,
     RandomController,
     SeekController,
@@ -54,6 +55,7 @@ __all__ = [
     "ArenaSource",
     "ScreenCapture",
     "centered_region",
+    "EyeController",
     "FlyController",
     "RandomController",
     "SeekController",

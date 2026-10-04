@@ -11,7 +11,10 @@ controller.act(frame) -> (2,) float32,归一化到 [-1,1](与 runner.Arm 同约�
     .brain       有 .spikes/.rates 属性的引擎(FlyController 才有),供遥测热图
     .blind       bool,该控制器是否保证只看像素(遥测侧须据此决定能否用检测)
 
-诚实声明:SeekController 是**管道校验臂**
+诚实声明之二:EyeController(见文件末尾)保留真实复眼(6,098 感光细胞),
+但**绕过了连接组** —— 它是 D25 的实战版,不是果蝇臂。
+
+诚实声明之一:SeekController 是**管道校验臂**
     它用 detect.find_target 的像素误差做 PD 控制,本质是「偷看答案的经典
     控制器」。它的用途只有一个:在接入真实鼠标/真实屏幕前,验证
     捕获->决策->注入整条链路的时序与方向正确性。它**不是**实验对照臂,
@@ -144,6 +147,85 @@ class SeekController:
 
     def close(self) -> None:
         pass
+
+
+class EyeController:
+    """桥接版复眼视觉伺服:帧 -> 6,098 感光细胞 -> 小眼空间图 -> 刹停律。
+
+    ===========================================================================
+    它是什么、不是什么(接真实游戏前必须读)
+    ===========================================================================
+    是:`flyaim.baselines.eye_servo.EyeServoArm` 的桥接外壳 —— 与离线
+    (D25,首达 12.5 帧、稳靶后 100%)**同一份代码**,只是把输入从
+    `Arena.render()` 换成屏幕捕获帧。视觉入口仍是果蝇自己的复眼:
+    R1-R6 亮度通路 + R7/R8 色觉通路,没有手搓假眼睛。
+
+    不是:它**绕过了连接组**。所以它不能进任何"果蝇会不会瞄准"的判定,
+    它回答的是「这个任务有多难」。这条边界与 D25 完全一致。
+
+    实战相关的三处语义开关(都在 EyeServoArm 里,这里只做装配与遥测):
+      * `chroma="r8"` —— Aim Lab 默认靶是**青色**(R<G),走 R8 短波通路;
+        离线靶场的**红靶**走 R7 长波通路。这不是换参数,是换感光细胞群。
+      * `aim_mode="center"` —— 真实 FPS 里准星**钉在画面中心不动**,动的是相机;
+        离线 2D 靶场里准星自己会动。两者的"瞄准点"语义完全不同,
+        错用会把上一拍命令外推到没动的准星上(详见 arm 的 docstring)。
+      * `search="scan"` —— 看不到靶时慢速扫视。实战必备:D18/D19 实测
+        视角一转离靶区就再也回不来。
+
+    另:准星颜色在实战里**不可靠**(Aim Lab 的枪模型也是红的,检测会锁到枪上,
+    见 AIMLAB.md §4 Phase B),所以实战默认 aim_mode="center",不依赖准星检测。
+    """
+
+    name = "eye"
+    blind = True  # 输入只有帧(架构级:act 只接受 frame)
+
+    def __init__(self, arm, keep_detection: bool = True) -> None:
+        self.arm = arm
+        self.keep_detection = bool(keep_detection)
+        self.last_act_ms = 0.0
+        self.last_detection: Detection | None = None
+
+    def act(self, frame: np.ndarray) -> np.ndarray:
+        import time as _t
+
+        t0 = _t.perf_counter()
+        a = np.asarray(self.arm.act(frame), dtype=np.float32).reshape(2)
+        self.last_act_ms = (_t.perf_counter() - t0) * 1000.0
+        if self.keep_detection:
+            # 遥测/预览用:把复眼的估计转成像素 Detection。
+            # ⚠️ 这只进文件与画面标注,**不回流给控制器**(控制器只吃 frame)。
+            px = self.arm.last_target_px
+            if px is None:
+                self.last_detection = Detection(ok=False)
+            else:
+                self.last_detection = Detection(
+                    ok=True, cx=float(px[0]), cy=float(px[1]),
+                    radius_px=float(self.arm.last_target_radius_px),
+                    score=float(self.arm.last_err_px),
+                )
+        return a
+
+    def reset(self) -> None:
+        self.arm.reset(0)
+        self.last_detection = None
+
+    def close(self) -> None:
+        pass
+
+    def describe(self) -> dict:
+        d = {
+            "name": self.name,
+            "chroma_channel": self.arm.chroma,
+            "aim_mode": self.arm.aim_mode,
+            "search": self.arm.search,
+            "v_px": self.arm.v_px,
+            "eye_grid": [self.arm.eye_rows, self.arm.eye_cols],
+            "n_receptors": int(self.arm.retina.input_neuron_ids.size),
+            "retinotopy": getattr(self.arm.retina, "_retinotopy_used", "?"),
+            "n_no_target": int(self.arm.n_no_target),
+            "n_no_aim": int(self.arm.n_no_aim),
+        }
+        return d
 
 
 class RandomController:

@@ -246,6 +246,81 @@ def _raises_ioerror(fn) -> bool:
         return True
 
 
+# ---------------------------------------------------------------- retina 空间读出
+
+
+def test_receptor_maps_roundtrip() -> None:
+    """`Retina.receptor_maps()` 必须**保有视网膜的光栅空间结构**(D25 就靠它成立)。
+
+    为什么必须测:eye-servo 的整条链路建立在"感光细胞驱动可以铺回 (24,32) 小眼空间图"
+    这一条上。若块映射悄悄错位,空间图不会报错,只会让瞄准读出一个偏移的靶位
+    —— 与 D7 的静默失效同一类风险。
+
+    三条判据:
+      (1) `m[cell[k]] == drive[rows[k]]` 对每一组、每个通道逐位成立
+          —— 这一条**本身**就蕴含"同一 cell 的多个感光细胞驱动值相同"
+          (否则后写覆盖会打破等式),也就是逆映射良定义;
+      (2) 帧上一个**落在单格内部**的亮点,必须在图上落到**对的格子**(空间语义正确,
+          而不只是"自洽");
+      (3) 加权质心等于解析质心。
+"""
+    from flyaim.config import RetinaConfig
+    from flyaim.retina.encoder import Retina
+
+    n_lum, n_r7, n_r8 = 3377, 1385, 1329          # MaleCNS 实测规模
+    n = n_lum + n_r7 + n_r8
+    types = np.array(["R1-R6"] * n_lum + ["R7y"] * n_r7 + ["R8p"] * n_r8, dtype=object)
+    ret = Retina(RetinaConfig(), input_neuron_ids=np.arange(n, dtype=np.int64),
+                 types=types)
+    check(ret._rows_lum.size == n_lum, f"R1-R6 分组数 = {ret._rows_lum.size}")
+    check(ret._rows_r7.size == n_r7, f"R7 分组数 = {ret._rows_r7.size}")
+    check(ret._rows_r8.size == n_r8, f"R8 分组数 = {ret._rows_r8.size}")
+    check(not ret.input_neuron_ids_fallback, "合成输入不应触发 fallback")
+
+    # ---- (1)(2) 1080x640? 不需要:直接喂编码器真实输出 ----
+    frame = np.full((480, 640, 3), 18, dtype=np.uint8)
+    frame[170, 310] = (235, 70, 70)               # 落在 cell(row=8, col=15) 内部
+    rr, cc = 8, 15
+    yy = np.arange(rr * 20, rr * 20 + 20)
+    xx = np.arange(cc * 20, cc * 20 + 20)
+    frame[np.ix_(yy, xx)] = (235, 70, 70)
+    drive = ret.frame_to_spikes(frame)
+
+    for ch in (0, 1):
+        maps = ret.receptor_maps(drive, channel=ch)
+        for key, rows, cells in (("lum", ret._rows_lum, ret._cell_lum),
+                                 ("r7", ret._rows_r7, ret._cell_r7),
+                                 ("r8", ret._rows_r8, ret._cell_r8)):
+            m = maps[key].reshape(-1)
+            # (1) 逐位逆映射(等式成立 ⇒ 同 cell 内驱动必然一致 ⇒ 逆映射良定义)
+            check(np.array_equal(m[cells], drive[rows, ch]),
+                  f"receptor_maps({key}, ch={ch}) 不是无损逆映射")
+        check(maps["lum"].shape == (ret.eye_rows, ret.eye_cols),
+              f"空间图形状 = {maps['lum'].shape}")
+
+    # ---- (3) 空间语义:亮点必须落到对的格子 ----
+    lum = ret.receptor_maps(drive, channel=0)["lum"]
+    got = np.unravel_index(int(np.argmax(lum)), lum.shape)
+    check((int(got[0]), int(got[1])) == (rr, cc),
+          f"亮点落到格 {got},期望 {(rr, cc)} —— 空间结构没保住")
+    chroma = np.clip(ret.receptor_maps(drive, 0)["r7"]
+                     - ret.receptor_maps(drive, 0)["r8"], 0.0, None)
+    gotc = np.unravel_index(int(np.argmax(chroma)), chroma.shape)
+    check((int(gotc[0]), int(gotc[1])) == (rr, cc),
+          f"色觉图上亮点落到格 {gotc},期望 {(rr, cc)}")
+
+    # ---- 质心必须是权重意义上的精确质心 ----
+    rng = np.random.default_rng(0)
+    w = rng.random((ret.eye_rows, ret.eye_cols), dtype=np.float32)
+    c = ret.centroid(w)
+    check(c is not None, "全正权重的质心不应为 None")
+    if c is not None:
+        exp_c = float((w * np.arange(ret.eye_cols)[None, :]).sum() / w.sum())
+        exp_r = float((w * np.arange(ret.eye_rows)[:, None]).sum() / w.sum())
+        check(abs(c[0] - exp_c) < 1e-4 and abs(c[1] - exp_r) < 1e-4,
+              f"centroid 偏差过大: {c} vs ({exp_c:.4f}, {exp_r:.4f})")
+
+
 # ---------------------------------------------------------------- runner
 
 
@@ -261,6 +336,7 @@ def main() -> int:
         test_artifacts_roundtrip(tmp)
         test_stats()
         test_paired_length_mismatch()
+    test_receptor_maps_roundtrip()
     print("=" * 72)
     if FAILS:
         print(f"❌ {len(FAILS)} 项失败:")
@@ -287,4 +363,5 @@ def test_all_pytest(tmp_path) -> None:
     test_artifacts_roundtrip(tmp_path)
     test_stats()
     test_paired_length_mismatch()
+    test_receptor_maps_roundtrip()
     assert not FAILS, FAILS
