@@ -236,3 +236,26 @@ $env:PYTHONIOENCODING = "utf-8"
 & $py tools/aimlab_bridge.py --controller fly --source screen --sink sendinput --gain-json flyaim/runs/bridge/gain.json --live  # 真实闭环
 & $py tools/live_web.py --dir flyaim/runs/<ts>-bridge/live   # 实时可视化
 ```
+
+## 9. GPU rollout 管线(DECISIONS.md D24)
+
+训练数据生成与反传已可全部跑在 GPU(视网膜编码、靶场推进、网络前向/反传),
+见 `flyaim/gpu/` 与 `tools/train_ann2_gpu.py`。
+
+```powershell
+# GPU 战役(默认 64 环境并行;rollout ~560 帧/s,GPU 利用率 100%)
+& $py tools/train_ann2_gpu.py --envs 64 --frames 12000 --tbptt 16
+# 等价性校验(GPU 版必须与 CPU 版数值一致才可用于结论)
+& $py tools/verify_gpu_retina.py       # 视网膜,相对误差 ~8e-6
+& $py tools/verify_gpu_backward.py     # 批量反传,W/Wz/g/gz 逐位一致
+```
+
+**硬件约束(实测,GTX 1660 Ti Max-Q / 6GB)**:本环境 **无 cuBLAS**,
+cuSPARSE 的 `csrmv`/`csrmm2` 不可用且 `spmm` 按列线性退化,故 SpMM 由自写
+CSR kernel(`flyaim/gpu/csr_spmm.py`)承担。TBPTT 长度 `--tbptt` 控制显存占用
+(每帧 traces 约 `0.171 GB × B/64`);若同时运行游戏(如 CS2 占 4GB 显存),
+需下调 `--envs` 或 `--tbptt` 以免颠簸。
+
+**结论提醒**:GPU 只改吞吐,**不改科学结论**。A2 战役(第六体制)在 GPU 上
+重跑后 real 375.6px 仍劣于 random 286.5px(C-G1/G2 失败;C-G3 效应仅 2.4px,
+名义显著而实际无意义)。
