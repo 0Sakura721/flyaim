@@ -527,10 +527,17 @@ class InputMirror:
         self.win_dy = 0
         self.rate = 0.0          # 事件/秒(上一秒)
         self.speed = 0.0         # 鼠标 px/s(上一秒)
+        # 拖动用:修饰键/按钮/光标(轮询,不受点击穿透影响)
+        self.ctrl = self.alt = self.lbtn = False
+        self.pos = (0, 0)
+        self.delta = (0, 0)
 
     def poll(self):
-        held = [k for k in self.watch
-                if self.user32.GetAsyncKeyState(int(k["vk"])) & 0x8000]
+        ks = self.user32.GetAsyncKeyState
+        held = [k for k in self.watch if ks(int(k["vk"])) & 0x8000]
+        self.ctrl = bool(ks(0x11) & 0x8000)
+        self.alt = bool(ks(0x12) & 0x8000)
+        self.lbtn = bool(ks(0x01) & 0x8000)
 
         class POINT(ctypes.Structure):
             _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
@@ -542,6 +549,8 @@ class InputMirror:
             if self._prev_cur is not None:
                 dx, dy = cur[0] - self._prev_cur[0], cur[1] - self._prev_cur[1]
             self._prev_cur = cur
+            self.pos = cur
+        self.delta = (dx, dy)
         self.win_dx += dx
         self.win_dy += dy
         # 事件流:mouse_move 节流 160ms
@@ -959,6 +968,28 @@ class Overlay:
     def _on_wheel(self, e):
         self._rescale(1.06 if e.delta > 0 else 0.94)
 
+    def _update_grab(self):
+        """按住 Ctrl+Alt 即进入抓取:关穿透 + 左键拖动窗口 + 滚轮缩放。
+
+        轮询 GetAsyncKeyState/GetCursorPos 实现,所以点击穿透开着也能触发
+        (Tk 事件在穿透窗口上收不到)。松开 Ctrl+Alt 自动恢复穿透。
+        """
+        grab = self.adjust or (self.mirror.ctrl and self.mirror.alt)
+        if grab != getattr(self, "_grab", False):
+            self._grab = grab
+            self.clickthrough = not grab
+            self._apply_exstyle()
+        if not grab or not self.mirror.lbtn:
+            return
+        x, y = self.mirror.pos
+        w, h = self.root.winfo_width(), self.root.winfo_height()
+        wx, wy = self.root.winfo_x(), self.root.winfo_y()
+        if not (wx <= x < wx + w and wy <= y < wy + h):
+            return                      # 光标不在窗内,不拖
+        dx, dy = self.mirror.delta
+        if dx or dy:
+            self.root.geometry(f"+{wx + dx}+{wy + dy}")
+
     def _toggle_combat(self):
         """实战启停:Ctrl+Alt+F。启动 = 捕获+伺服+注入;再按 = 停止。"""
         print("[overlay] combat toggle", flush=True)
@@ -1281,6 +1312,9 @@ class Overlay:
             if not self.root.winfo_exists():
                 return
         act, held, note, (mdx, mdy) = self._brain_activity()
+        # 抓取拖动:按住 Ctrl+Alt(轮询,不依赖点击穿透),鼠标在窗内用左键拖。
+        # 这是"滑得动"的自然手势 —— 不必先按 Ctrl+Alt+D 切模式。
+        self._update_grab()
         # 按键 down/up 事件(边缘检测)
         labels = {k["label"]: k for k in held}
         for k in held:
@@ -1414,6 +1448,11 @@ def main() -> int:
         ctypes.windll.shcore.SetProcessDpiAwareness(2)
     except Exception:
         pass
+    # 单实例:多实例会互相抢全局热键(实测第二个实例注册全部失败):
+    _mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "FlyOverlay_singleton")
+    if ctypes.windll.kernel32.GetLastError() == 183:   # ERROR_ALREADY_EXISTS
+        print("[overlay] 已有实例在运行,退出", flush=True)
+        return 0
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--x", type=int, default=-1)
     ap.add_argument("--y", type=int, default=100)
