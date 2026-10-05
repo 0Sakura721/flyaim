@@ -63,7 +63,7 @@
 | `tools/aimlab_play.py` | **任务内会话**:collect/seek/fly/hybrid 四模式,真游戏里跑闭环并采数据 |
 | `tools/aimlab_train_ingame.py` | 游戏域读出层重训:采集的 (DN, action) 对 → 岭回归 → readout_ingame.npz |
 | `tools/aimlab_sim3d.py` | 复刻真实 FPS 语义的模拟域彩排(不动鼠标,正负对照 + 增益容差) |
-| `tools/aimlab_smoke.py` | 64 项冒烟检查(零依赖 GPU/游戏/注入) |
+| `tools/aimlab_smoke.py` | 76 项冒烟检查(零依赖 GPU/游戏/注入) |
 
 ---
 
@@ -233,7 +233,7 @@ fly vs seek vs zero;主指标沿用平均角误差而非命中率 —— 理由�
 $py = "C:\Users\Admin\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\python\python.exe"
 $env:PYTHONIOENCODING = "utf-8"
 
-& $py tools/aimlab_smoke.py                    # 冒烟(离线,30 项)
+& $py tools/aimlab_smoke.py                    # 冒烟(离线,76 项)
 & $py tools/aimlab_smoke.py --screen           # + 真实截屏 5 帧(只读)
 & $py tools/aimlab_smoke.py --cursor-check     # + 光标微移注入(显式)
 & $py tools/aimlab_gain.py --from-sens 2 --engine aimlab --fov 106.26  # 增益标定(D27/D28)→ gain.json& $py tools/aimlab_bridge.py --controller fly --source arena --frames 50   # 无头彩排
@@ -430,6 +430,19 @@ $py tools/aimlab_play.py --mode fly --readout flyaim/runs/bridge/readout_ingame.
 $py tools/aimlab_play.py --mode hybrid --beta 0.25
 #    另有 --mode seek(导师上限参照)、--no-trigger(纯瞄准不开火)
 ```
+
+**开火层四个旋钮**(D30,治「瞄得准却不开火」):
+
+| 参数 | 默认 | 作用 |
+|---|---|---|
+| `--sticky-px` | 90 | **目标粘滞**。多靶时锁「离上一拍最近」的靶,不选最大块。**这是主因**:`find_target` 永远选最大连通块,准星靠近左靶后右靶变成最大块,检测器切过去、`err` 瞬间跳 30~40px,收敛被打断。0=关 |
+| `--fire-frac` | 1.4 | 开火门限 = 靶半径 × 该系数。原来 1.15 太紧,`err` 与门限同量级会擦边失手 |
+| `--min-radius-px` | 4.0 | 门限的像素下限,防小靶/远靶时门限塌缩到 0 |
+| `--cooldown` | 0.10 | 两次开火最小间隔秒。原来 0.22 在 21Hz 下占 **4.7 拍**,会把刚刷新的靶整拍吃掉 |
+
+跑完战报会打印**诊断计数**:`进门限 N 拍(其中冷却挡下 M 拍),未进门限 K 拍`。
+`进门限 0` 说明问题在感知侧(选错靶/没收敛),不在门限 —— 先查 `--sticky-px`。
+修好后实测开火 **0→21 次**,最小 `err` 从 9.2px 降到 **1.4px**(D30.3)。
 
 > ⚠️ **这四类模式都会真实移动并点击鼠标。** 保持 Aim Lab 前台、手离鼠标。
 > 前面的探测/标定/`--sink null` 全是只读,只有到这里才真的动。

@@ -451,6 +451,134 @@ def t13_fov_convention() -> None:
           "counts_per_360 不应随 FOV 变化(核心等式里没有 FOV)")
 
 
+def t14_trigger_gate() -> None:
+    """D30:开火门限守卫 —— 防止「瞄得准却不开火」再犯。
+
+    这个 bug 的特点:瞄准链路完全正常(收敛误差也很小),
+    但开火门限与收敛误差**同一量级**,导致擦边失手、时开时不开。
+    靠人眼很难发现"为什么没开火",必须用数学回归守住门限公式。
+    """
+    print("[T14] 开火门限守卫 (D30)")
+    import numpy as np
+
+    from flyaim.bridge.controllers import TriggerOnTarget
+    from flyaim.bridge.detect import Detection
+
+    def gate_err(R: float, fire_frac: float, min_r: float) -> tuple[float, float]:
+        """返回 (limit, 实际是否开火)。用假 frame 直接驱动 act()。"""
+        tg = TriggerOnTarget(None, lambda: True, fire_frac=fire_frac, min_radius_px=min_r)
+
+        class _Inner:
+            last_detection = Detection(ok=True, cx=0.0, cy=0.0, radius_px=R)
+
+            def act(self, frame):
+                return np.zeros(2, dtype=np.float32)
+
+        tg.inner = _Inner()
+        frame = np.zeros((10, 10, 3), dtype=np.uint8)
+        err_holder: dict[str, float] = {}
+
+        # 直接把 err 写进 det 位置:cx/cy 以画面中心为零
+        h, w = 480, 640
+        frame = np.zeros((h, w, 3), dtype=np.uint8)
+
+        def run(dx: float, dy: float) -> bool:
+            _Inner.last_detection = Detection(
+                ok=True, cx=(w - 1) / 2.0 + dx, cy=(h - 1) / 2.0 + dy, radius_px=R)
+            tg.act(frame)
+            return tg.n_fires > 0
+
+        return max(R * fire_frac, min_r), run
+
+    # 1) 门限公式:取大者,而非单纯倍数
+    lim = max(8.0 * 1.4, 4.0)
+    check("T14.limit_formula", abs(lim - 11.2) < 1e-6,
+          f"radius=8 fire_frac=1.4 min=4 -> limit={lim:.1f}px")
+    lim2 = max(1.0 * 1.4, 4.0)
+    check("T14.min_radius_floor", abs(lim2 - 4.0) < 1e-6,
+          f"小靶 radius=1 -> 门限被 min_radius_px 兜到 {lim2:.1f}px,而非塌缩到 1.4px")
+
+    # 2) 关键回归:原来会失手的场景现在必须开火
+    #    实测 radius=7.0, err=8.1 —— 旧门限 7.0*1.15=8.05 < 8.1 => 不开火
+    old_limit = 7.0 * 1.15
+    check("T14.regress_old_fails", 8.1 > old_limit,
+          f"旧门限 {old_limit:.2f}px < err 8.10px -> 这就是「瞄了不开火」的直接成因")
+    new_limit = max(7.0 * 1.4, 4.0)
+    check("T14.regress_new_fires", 8.1 <= new_limit,
+          f"新门限 {new_limit:.2f}px >= err 8.10px -> 同一场景现在开火")
+
+    # 3) 真跑一遍 act():门限内外各一次
+    _, run = gate_err(7.0, 1.4, 4.0)
+    check("T14.fires_inside", run(4.0, 0.0), "err=4.0px 应在门限内开火")
+    _, run2 = gate_err(7.0, 1.4, 4.0)
+    check("T14.no_fire_outside", not run2(40.0, 0.0), "err=40px 远超门限,不应开火")
+
+    # 4) 边界:err 恰等于门限时必须开火(闭区间,不能是开区间)
+    _, run3 = gate_err(8.0, 1.4, 4.0)
+    check("T14.boundary_inclusive", run3(new_limit, 0.0),
+          f"err == limit({new_limit:.1f}px) 属边界,闭区间必须开火")
+
+    # 5) 向后兼容:只给 err_frac 时 fire_frac 应继承它
+    tg = TriggerOnTarget(None, lambda: True, err_frac=0.9)
+    check("T14.legacy_erfrac", abs(tg.fire_frac - 0.9) < 1e-9,
+          "未给 fire_frac 时应回退到 err_frac,不破坏旧调用")
+
+    # 6) 冷却:连续两拍必须只开一枪
+    tg = TriggerOnTarget(None, lambda: True, fire_frac=1.4, min_radius_px=4.0,
+                         cooldown_s=10.0)
+
+    class _Inner:
+        last_detection = None
+
+        def act(self, frame):
+            return np.zeros(2, dtype=np.float32)
+
+    tg.inner = _Inner()
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    for _ in range(2):
+        _Inner.last_detection = Detection(ok=True, cx=319.5, cy=239.5, radius_px=8.0)
+        tg.act(frame)
+    check("T14.cooldown", tg.n_fires == 1,
+          f"冷却 10s 内连打两拍 -> 只应开 1 枪,实开 {tg.n_fires}")
+    check("T14.cooldown_counted", tg.n_blocked_by_cooldown == 1,
+          f"被冷却挡下应计数,实测 {tg.n_blocked_by_cooldown}")
+
+    # 7) 目标粘滞:多靶并存时必须挑离上一拍最近的,不能"永远选最大块"
+    #    构造:大靶在右边(area 大),上一拍在左边 —— 应继续锁左边
+    import numpy as _np
+
+    tg = TriggerOnTarget(None, lambda: True, fire_frac=1.4, min_radius_px=4.0,
+                         sticky_px=90.0)
+
+    class _Inner2:
+        last_detection = None
+
+        def act(self, frame):
+            return _np.zeros(2, dtype=_np.float32)
+
+    tg.inner = _Inner2()
+    fr = _np.zeros((480, 640, 3), dtype=_np.uint8)
+    # 画面里放两块同色:左边小靶 r=6 @(200,240),右边大靶 r=14 @(500,240)
+    yy, xx = _np.ogrid[:480, :640]
+    fr[(_np.hypot(xx - 200, yy - 240) <= 6)] = (48, 224, 224)
+    fr[(_np.hypot(xx - 500, yy - 240) <= 14)] = (48, 224, 224)
+    # 上一拍锁左边
+    tg._prev_xy = (200.0, 240.0)
+    tg.act(fr)
+    check("T14.sticky_keeps_near", tg.last_detection is not None
+          and abs(tg.last_detection.cx - 200) < 5,
+          f"sticky 应保持锁定近的左边小靶 cx≈200,实测 "
+          f"{tg.last_detection.cx if tg.last_detection else None:.0f}")
+
+    # 对照:关掉粘滞就应回到"选最大块"(右边 r=14)
+    tg2 = TriggerOnTarget(None, lambda: True, fire_frac=1.4, min_radius_px=4.0,
+                          sticky_px=0.0)
+    tg2.inner = _Inner2()
+    det = find_target(fr, ref_color=(48, 224, 224), tolerance=95.0)
+    check("T14.no_sticky_picks_big", abs(det.cx - 500) < 5,
+          f"关粘滞后 find_target 选最大块 cx≈500,实测 {det.cx:.0f}(这就是换靶的根源)")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--screen", action="store_true", help="加测真实屏幕捕获(只读)")
@@ -472,6 +600,7 @@ def main() -> int:
     t11_sens_model()
     t12_pointer_probe()
     t13_fov_convention()
+    t14_trigger_gate()
     if args.screen:
         t7_screen()
     if args.cursor_check:

@@ -344,16 +344,44 @@ class TriggerOnTarget:
     blind = False  # 用了检测(仅开火层);内层 controller 保持自己的 blind 属性
 
     def __init__(self, inner, click_fn, ref_color=(48, 224, 224), tolerance: float = 60.0,
-                 err_frac: float = 0.9, cooldown_s: float = 0.22) -> None:
+                 err_frac: float = 0.9, cooldown_s: float = 0.22,
+                 fire_frac: float | None = None, min_radius_px: float = 0.0,
+                 sticky_px: float = 0.0) -> None:
+        """err_frac 保留作向后兼容别名;fire_frac 是显式命名的开火门限。
+
+        **为什么要分开"瞄准"与"开火"两个判据**(2026-10-05 实测修正):
+
+        原实现用 `err <= radius * 1.15` 同时承担两个职责,结果在真机上
+        **瞄得准却不开火**。原因实测很清楚(640x480 缩放口径):
+
+            靶半径 radius  = 7.0 ~ 8.4 px   (靶越靠画面边缘,透视上越小)
+            开火门限        = 8.1 ~ 9.7 px
+            收敛后的 err   = 8.1 ~ 9.4 px   <- 与门限同量级,擦边
+
+        即 err 与门限**共用了同一个数量级**,差 0.5px 就失手。而半径还会
+        随靶的位置变化,使门限跟着抖 —— 这是"有时开有时不开"的直接成因。
+
+        修法:门限改为 `max(radius * fire_frac, min_radius_px)`。两个旋钮
+        各管一件事:
+          * `fire_frac`(默认 1.4)放宽几何门限,吸收"擦边"抖动;
+          * `min_radius_px` 给缩到很小的靶兜底,避免门限随透视缩到 0。
+        """
         self.inner = inner
         self.click_fn = click_fn
         self.ref_color = tuple(ref_color)
         self.tolerance = float(tolerance)
         self.err_frac = float(err_frac)
+        self.fire_frac = float(err_frac if fire_frac is None else fire_frac)
+        self.min_radius_px = float(min_radius_px)
+        self.sticky_px = float(sticky_px)  # >0 时启用目标粘滞(见 act 注释)
+        self._prev_xy: tuple[float, float] | None = None
         self.cooldown_s = float(cooldown_s)
         self._last_fire = -1e9
         self.n_fires = 0
         self.n_hits_inferred = 0
+        self.n_blocked_by_cooldown = 0
+        self.n_geometric_miss = 0
+        self.n_in_gate = 0
         self.last_detection: Detection | None = None
 
     @property
@@ -366,18 +394,41 @@ class TriggerOnTarget:
         a = np.asarray(self.inner.act(frame), dtype=np.float32).reshape(2)
         # 内层(seek/hybrid)若本拍已检测过,直接复用,省一次 ~25ms 的连通域
         det = getattr(self.inner, "last_detection", None)
-        if det is None:
+        if det is None or not det.ok:
             det = find_target(frame, ref_color=self.ref_color, tolerance=self.tolerance)
+        if self.sticky_px > 0.0 and det is not None and det.ok:
+            # 目标粘滞(治「换靶导致 err 跳变」):内层 find_target 永远选最大连通块,
+            # 多靶并存时准星刚靠近 A,A 稍微变小就切到 B,err 每一拍都在两级之间跳,
+            # 永远进不了开火门限 —— 这是「瞄得准却不开火」的主因(2026-10-05 实测:
+            # seq 15 dx=-28.0 一路收敛,seq 17 突跳成 dy=+35.5,即换了靶)。
+            # 修法:本拍在全图候选里挑离上一拍最近的那个,让 err 连续可比。
+            cands = find_targets(frame, ref_color=self.ref_color, tolerance=self.tolerance)
+            if cands and self._prev_xy is not None:
+                det = min(cands, key=lambda d: (d.cx - self._prev_xy[0]) ** 2
+                          + (d.cy - self._prev_xy[1]) ** 2)
+                near = (det.cx - self._prev_xy[0]) ** 2 + (det.cy - self._prev_xy[1]) ** 2
+                if near > self.sticky_px ** 2:
+                    det = find_target(frame, ref_color=self.ref_color,
+                                      tolerance=self.tolerance)  # 跳太远则信全局最大
         self.last_detection = det
-        if det.ok:
-            h, w = frame.shape[:2]
-            err = float(np.hypot(det.cx - (w - 1) / 2.0, det.cy - (h - 1) / 2.0))
-            now = _t.perf_counter()
-            if err <= det.radius_px * self.err_frac and now - self._last_fire >= self.cooldown_s:
+        if det is None or not det.ok:
+            return a
+        self._prev_xy = (det.cx, det.cy)
+        h, w = frame.shape[:2]
+        err = float(np.hypot(det.cx - (w - 1) / 2.0, det.cy - (h - 1) / 2.0))
+        limit = max(det.radius_px * self.fire_frac, self.min_radius_px)
+        now = _t.perf_counter()
+        if err <= limit:
+            self.n_in_gate += 1
+            if now - self._last_fire >= self.cooldown_s:
                 if self.click_fn():
                     self._last_fire = now
                     self.n_fires += 1
                     self.n_hits_inferred += 1  # Gridshot:盘内点击必中
+            else:
+                self.n_blocked_by_cooldown += 1
+        else:
+            self.n_geometric_miss += 1
         return a
 
     def reset(self) -> None:
@@ -385,6 +436,10 @@ class TriggerOnTarget:
         self._last_fire = -1e9
         self.n_fires = 0
         self.n_hits_inferred = 0
+        self.n_blocked_by_cooldown = 0
+        self.n_geometric_miss = 0
+        self.n_in_gate = 0
+        self._prev_xy = None
 
     def close(self) -> None:
         self.inner.close()

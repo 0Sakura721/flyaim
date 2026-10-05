@@ -66,6 +66,21 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--no-autostart", action="store_true",
                     help="不自动点「点击开始」(已手动进入任务时用)")
     ap.add_argument("--no-trigger", action="store_true", help="关闭开火层(纯瞄准)")
+    ap.add_argument("--fire-frac", type=float, default=1.4,
+                    help="开火门限 = 靶半径 × 该系数(默认 1.4;之前 1.15 太紧会「瞄了不开火」)")
+    ap.add_argument("--min-radius-px", type=float, default=4.0,
+                    help="开火门限的像素下限(默认 4.0;防小靶/远靶时门限塌缩到 0)")
+    ap.add_argument("--cooldown", type=float, default=0.10,
+                    help="两次开火的最小间隔秒(默认 0.10;原来 0.22 在 21Hz 下要占 4.7 拍,"
+                         "会整拍吃掉刚刷新的靶 —— 这是「瞄了不开火」的第二成因)")
+    ap.add_argument("--det-tolerance", type=float, default=95.0,
+                    help="色块匹配容差(默认 95,原来 60)。容差越大掩膜覆盖越完整的靶盘,"
+                         "det.radius_px 越接近靶的真实视觉半径 —— 半径偏小是"
+                         "「瞄了不开火」的第三成因")
+    ap.add_argument("--sticky-px", type=float, default=90.0,
+                    help="目标粘滞半径(默认 90,0=关)。>0 时开火层在候选靶里挑离上一拍"
+                         "最近的那个,防止「永远选最大连通块」导致换靶、err 跳变。"
+                         "这是「瞄得准却不开火」的主因")
     ap.add_argument("--action-ema", type=float, default=0.35,
                     help="动作 EMA 平滑系数(0=关;抑制抽搐)")
     ap.add_argument("--tag", default=None)
@@ -158,6 +173,19 @@ class ActionEMA:
     def n_fires(self):
         return getattr(self.inner, "n_fires", 0)
 
+    @property
+    def n_blocked_by_cooldown(self):
+        return getattr(self.inner, "n_blocked_by_cooldown", 0)
+
+    @property
+    def n_geometric_miss(self):
+        return getattr(self.inner, "n_geometric_miss", 0)
+
+    @property
+    def n_in_gate(self):
+        """落在开火几何门限内的拍数(未被冷却挡下的才开火)。"""
+        return getattr(self.inner, "n_in_gate", 0)
+
 
 def _build_fly(args):
     rp = Path(args.readout) if args.readout else READOUT_OFFLINE
@@ -235,7 +263,8 @@ def main() -> int:
     elif args.mode == "seek":
         from flyaim.bridge.controllers import SeekController
 
-        core = SeekController(ref_color=TEAL, use_aim_detect=False, kp=args.kp)
+        core = SeekController(ref_color=TEAL, tolerance=args.det_tolerance,
+                              use_aim_detect=False, kp=args.kp)
     elif args.mode == "fly":
         core = _build_fly(args)
     else:  # hybrid
@@ -248,7 +277,10 @@ def main() -> int:
     if args.action_ema > 0:
         stack = ActionEMA(stack, args.action_ema)
     if not args.no_trigger:
-        stack = TriggerOnTarget(stack, sink.click, ref_color=TEAL, err_frac=1.15)
+        stack = TriggerOnTarget(stack, sink.click, ref_color=TEAL,
+                                tolerance=args.det_tolerance,
+                                fire_frac=args.fire_frac, min_radius_px=args.min_radius_px,
+                                cooldown_s=args.cooldown, sticky_px=args.sticky_px)
     print(f"  控制栈: {core.name}"
           f"{' +EMA' if args.action_ema > 0 else ''}{' +trigger' if not args.no_trigger else ''}")
 
@@ -279,11 +311,18 @@ def main() -> int:
     summary["mode"] = args.mode
     summary["n_fires"] = int(getattr(stack, "n_fires", 0))
     summary["n_hits_inferred"] = int(getattr(stack, "n_hits_inferred", 0))
+    summary["n_in_gate"] = int(getattr(stack, "n_in_gate", 0))
+    summary["n_blocked_by_cooldown"] = int(getattr(stack, "n_blocked_by_cooldown", 0))
+    summary["n_geometric_miss"] = int(getattr(stack, "n_geometric_miss", 0))
     save_json(str(run_dir / "bridge_summary.json"), summary)
 
     print("\n---- 本局战报 ----")
     print(f"  模式 {args.mode}  帧数 {summary['frames']}  拍频 {summary['tick_hz']} Hz")
     print(f"  开火 {summary['n_fires']} 次  推断命中 {summary['n_hits_inferred']}")
+    if summary["n_in_gate"] or summary["n_geometric_miss"]:
+        print(f"  开火层诊断: 进门限 {summary['n_in_gate']} 拍"
+              f"(其中冷却挡下 {summary['n_blocked_by_cooldown']} 拍),"
+              f"未进门限 {summary['n_geometric_miss']} 拍")
     print(f"  目录 {run_dir}")
     return 0
 
