@@ -1,0 +1,41 @@
+{
+  "controller": "eye",
+  "sink": "null",
+  "source": "screen",
+  "frames": 120,
+  "wall_s": 3.65,
+  "tick_hz": 32.85,
+  "latency_ms": {
+    "act_p50": 19.183,
+    "act_p95": 27.807,
+    "inject_p50": 0.07,
+    "tick_p50": 29.229,
+    "tick_p95": 39.913,
+    "capture_age_p50": 25.573,
+    "capture_age_p95": 30.881,
+    "grab_p50": 3.283
+  },
+  "counts_total": [
+    12320,
+    -5230
+  ],
+  "n_hits_env": 0,
+  "focus_losses": 0,
+  "telemetry": {},
+  "gain": {
+    "counts_per_360": 12000.0,
+    "speed_fraction_per_action": 0.021875,
+    "fov_h_deg": 106.26,
+    "max_counts_per_tick": 600.0,
+    "invert_x": false,
+    "invert_y": false,
+    "deadzone": 0.0,
+    "counts_per_action": 111.41,
+    "deg_per_count": 0.03,
+    "deg_per_action": 3.3422,
+    "lin_fov_deg": 152.788,
+    "cm360": 38.1,
+    "semantics": "action=1.0 使靶在画面中心移动 speed_fraction×W 像素(与离线靶场 14px/640px 同语义);角度量 = speed_fraction×linFOV,linFOV=2tan(FOV/2) 是中心处 px/度 的线性化。透视边缘偏差见 DECISIONS D26 的 px/度 实测。"
+  },
+  "pointer_accel_enabled": true
+}

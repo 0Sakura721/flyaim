@@ -1,0 +1,60 @@
+{
+  "controller": "trigger+stall",
+  "sink": "sendinput",
+  "source": "dual-window",
+  "frames": 570,
+  "wall_s": 20.03,
+  "tick_hz": 28.46,
+  "latency_ms": {
+    "act_p50": 31.885,
+    "act_p95": 43.887,
+    "inject_p50": 0.647,
+    "tick_p50": 33.816,
+    "tick_p95": 59.208,
+    "capture_age_p50": 18.106,
+    "capture_age_p95": 31.387,
+    "grab_p50": 0.426
+  },
+  "counts_total": [
+    -662,
+    -403
+  ],
+  "n_hits_env": 0,
+  "focus_losses": 0,
+  "telemetry": {
+    "frames": 570,
+    "jsonl": "D:\\dsh\\autoaim\\flyaim\\runs\\20261005-215203-play-seek\\live\\telemetry.jsonl",
+    "bytes": 328226,
+    "previews": 29
+  },
+  "gain": {
+    "counts_per_360": 8181.818181818182,
+    "speed_fraction_per_action": 0.021875,
+    "fov_h_deg": 106.26,
+    "max_counts_per_tick": 600.0,
+    "invert_x": false,
+    "invert_y": false,
+    "deadzone": 0.0,
+    "counts_per_action": 75.96,
+    "deg_per_count": 0.044,
+    "deg_per_action": 3.3422,
+    "lin_fov_deg": 152.788,
+    "cm360": 25.97727272727273,
+    "semantics": "action=1.0 使靶在画面中心移动 speed_fraction×W 像素(与离线靶场 14px/640px 同语义);角度量 = speed_fraction×linFOV,linFOV=2tan(FOV/2) 是中心处 px/度 的线性化。透视边缘偏差见 DECISIONS D26 的 px/度 实测。"
+  },
+  "mode": "seek",
+  "n_fires": 184,
+  "n_hits_inferred": 184,
+  "n_in_gate": 239,
+  "n_blocked_by_cooldown": 55,
+  "n_geometric_miss": 331,
+  "n_target_switches": 60,
+  "n_restarts": 0,
+  "n_limited": 53,
+  "n_deadband": 25,
+  "n_scans": 0,
+  "n_aim_switches": 19,
+  "n_window_switches": 41,
+  "n_full_reads": 27,
+  "n_center_reads": 1503
+}
