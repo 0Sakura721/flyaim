@@ -26,6 +26,10 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / ".cache" / "video_ref"
+# 地面真值 CSV 落到 **tools/fixtures/**(会被 git 跟踪)而不是 .cache/:
+# 参考视频本身不在仓库里,这份 63 点轨迹是**唯一**能长期留存的基准记录。
+# 网格 PNG 仍留在 .cache/(1.4MB,可再生产物,不进仓库)。
+TRUTH_CSV = ROOT / "tools" / "fixtures" / "ref_hud_ground_truth.csv"
 VIDEO = Path(r"C:\Users\Admin\Downloads\Screenrecording_20261005_230205.mp4")
 FFMPEG = Path(
     r"C:\Users\Admin\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies"
@@ -95,9 +99,12 @@ def write_ground_truth(frames: list[Path]) -> None:
         ts = "" if tdisp is None else _mmss(tdisp)
         rows.append(f"{i},{'' if pts is None else pts},{tdisp or ''},{ts},"
                     f"{'' if acc is None else acc},lead-visual")
+    TRUTH_CSV.parent.mkdir(parents=True, exist_ok=True)
+    TRUTH_CSV.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    print(f"落盘 {TRUTH_CSV}({len(READINGS)} 行,来源=目检)")
+    # 兼容旧路径:早期版本把 CSV 写在 .cache/,留一份拷贝避免旧引用失效
     (OUT / "hud_ground_truth.csv").write_text("\n".join(rows) + "\n",
                                               encoding="utf-8")
-    print(f"落盘 {OUT / 'hud_ground_truth.csv'}({len(READINGS)} 行,来源=目检)")
 
     # ---- 自洽性自检:这些是"读数可信"的必要条件 ----
     pts = [p for p, _, _ in READINGS if p is not None]

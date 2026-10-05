@@ -2386,7 +2386,9 @@ T21 扩到 11 项:新增 `small_target_fixate`(小靶动态进入带)、
 #### D42.2b 全片分数轨迹(63 个逐秒读数,**本轮新增的地面真值**)
 
 `tools/diag_ref_hud_grid.py`:每秒抽 1 帧 → 裁三框 → 2× 放大 → 拼 3×21 网格
-→ **目检读数**(不是 OCR)。读数落 `.cache/video_ref/hud_ground_truth.csv`,
+→ **目检读数**(不是 OCR)。读数落 **`tools/fixtures/ref_hud_ground_truth.csv`**
+(会被 git 跟踪 —— 参考视频本身不在仓库里,这份 63 点轨迹是**唯一**能长期留存的
+基准记录;网格 PNG 仍留在 `.cache/`,1.4MB 可再生产物不进仓库),
 带 `read_by=lead-visual` 标明来源。**为什么不用 OCR**:手机片布局与 PC 的
 1920×1080 不同,复用 `GRAB_BBOX` 需重新标定;而这一轮要的只是**分数的形状**,
 一张图一次看完比一个不可靠的 OCR 便宜得多,也**不会产生"看着精确的错数字"**
