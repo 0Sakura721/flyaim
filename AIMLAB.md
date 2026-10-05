@@ -63,7 +63,7 @@
 | `tools/aimlab_play.py` | **任务内会话**:collect/seek/fly/hybrid 四模式,真游戏里跑闭环并采数据 |
 | `tools/aimlab_train_ingame.py` | 游戏域读出层重训:采集的 (DN, action) 对 → 岭回归 → readout_ingame.npz |
 | `tools/aimlab_sim3d.py` | 复刻真实 FPS 语义的模拟域彩排(不动鼠标,正负对照 + 增益容差) |
-| `tools/aimlab_smoke.py` | 178 项冒烟检查(零依赖 GPU/游戏/注入) |
+| `tools/aimlab_smoke.py` | 183 项冒烟检查(零依赖 GPU/游戏/注入) |
 
 ---
 
@@ -71,7 +71,7 @@
 
 | 项 | 结果 |
 |---|---|
-| 冒烟测试 | **178/178 通过**(`tools/aimlab_smoke.py`) |
+| 冒烟测试 | **183/183 通过**(`tools/aimlab_smoke.py`) |
 | seek 控制器闭环 | ArenaSource 彩排 300 帧命中 **7 次**(判定半径 22px)→ 管道收敛性成立 |
 | 真实屏幕闭环(seek) | **28.4 Hz**(Phase B8);fly 接真实画面 **17.6 Hz**(bridge-fly-live) |
 | 捕获后端 | bettercam(DXGI)→ mss → PIL 自动回退;BGRA 全链路,零 cv2 依赖 |
@@ -120,7 +120,7 @@ FlyController 不消费任何检测(架构上只见像素)。
 ## 4. 分阶段计划与验收标准
 
 ### Phase A — 管道层(✅ 本轮完成)
-验收:冒烟 178/178;ArenaSource 彩排 seek 命中 ≥3;CLI 三模式可跑。
+验收:冒烟 183/183;ArenaSource 彩排 seek 命中 ≥3;CLI 三模式可跑。
 **已完成,证据见 §2。**
 
 ### Phase B — 真实屏幕管道校验(不注入,需要 Aim Lab 就位)
@@ -233,7 +233,7 @@ fly vs seek vs zero;主指标沿用平均角误差而非命中率 —— 理由�
 $py = "C:\Users\Admin\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\python\python.exe"
 $env:PYTHONIOENCODING = "utf-8"
 
-& $py tools/aimlab_smoke.py                    # 冒烟(离线,178 项)
+& $py tools/aimlab_smoke.py                    # 冒烟(离线,183 项)
 & $py tools/aimlab_smoke.py --screen           # + 真实截屏 5 帧(只读)
 & $py tools/aimlab_smoke.py --cursor-check     # + 光标微移注入(显式)
 & $py tools/aimlab_gain.py --from-sens 2 --engine aimlab --fov 106.26  # 增益标定(D27/D28)→ gain.json& $py tools/aimlab_bridge.py --controller fly --source arena --frames 50   # 无头彩排

@@ -14,25 +14,28 @@ OCR 复用 `flyaim/bridge/score_ocr.py` 的 `ScoreHUD`(布局常量在此处运�
   <py> tools/analyze_ref_video.py --stage layout
   <py> tools/analyze_ref_video.py --stage all
 
-⚠️⚠️ **本脚本的 `--stage all` 产出目前不可信,不要引用(D42.4 记录在案)。**
-   已知缺陷:它只解码了全片 1908 帧里的 **500 帧(前 ~16.6 秒)**,因此
-   `hud_summary.json` 里的这些值**全是错的**:
+✅ **本脚本的 `--stage all` 产出已独立复核通过(2026-10-06 最终版),可以使用。**
+   它的终局读数 **130,709 / 96% / 00:00** 被 Lead 用一条**完全独立**的路径验中:
+   0.15s 步长密集抽帧目检,分数在 `00:00` 之后仍继续上涨
+   (t=61.00→129,221 → t=61.45→130,335 → t=61.60→**130,709** 并保持到
+   t=62.05,HUD 于 t≈62.2 消失)。详见 DECISIONS D42.11。
 
-       final_points = 1207           真值 130,335
-       max_points_in_round = 3530    真值 ≥130,335
-       round_duration_s = 1.271      真值 ~60
-       countdown "00:37"→"00:00" 跨 13.8s   物理上不可能
+   **历史(必须留着,否则会重蹈)**:
+     ① 首版只解码了 1908 帧里的 500 帧(前 ~16.6s),`final_points` 写成 1207,
+        该批产物已隔离到 `.cache/video_ref/_INVALID_subagent_16s_window/`;
+     ② Lead 用 `diag_ref_hud_grid.py` 的 **`fps=1` 抽帧**读到 130,335/95%,
+        并据此"纠正"了用户原始的 130,709/96% —— **那个纠正是错的**。
+        `fps=1` 滤镜有自己的相位(实测 ≈ +0.45s),真正的终局值出现在 t≈61.6,
+        而 HUD 在 t≈62.2 消失,**恰好落在 cell 61 与 cell 62 之间被采样漏掉**。
+        教训:**用固定相位抽样去读一个"末值",必须自己验相位,而不能假设它对齐。**
 
-   受影响的产物已隔离到 `.cache/video_ref/_INVALID_subagent_16s_window/`(内含
-   一份同样的说明)。**真值请用 `tools/diag_ref_hud_grid.py`** —— 它产出
-   `.cache/video_ref/hud_ground_truth.csv`(63 个逐秒读数,自洽性自检全过:
-   点数单调不减 0→130,335、倒计时下降后逐秒 -1)。
-
-   **仍然有效的部分**:`--stage layout` 的 HUD 布局测量(几何量,与时间窗无关)
-   被 `diag_ref_hud_grid.py` 用于裁剪;相位相关的 `phase_corr_selftest`
-   (6 个已知位移全部复现到 ±1e-3)也是可信的。
-
-   要用 `--stage all`,必须先验证它覆盖到 t≈63s 且终局读数落在 130,3xx。
+   **与本脚本结论冲突、且尚未解决的先验(不要当成已定论)**:
+     - 每球得分:**本脚本实测 ≈ 固定 373/球,未支持"按时距加权"**(r=-0.23,
+       间隔 2 倍变化只带来 7% 得分变化)。这与 D42.1 记录的"间隔加权"相反。
+     - 瞄准节奏:本脚本实测 duty 44.8% / dwell p50 66.2ms,与 D41 用的
+       5% / 629ms 基线严重不符。但**这一项本脚本自己承认不可靠** ——
+       5.93 hits/s 的靶子生灭会造成大量伪位移,中值滤波把 dwell 从 66ms
+       抬到 232ms 就是这个原因。**duty/dwell 在这段录像上尚无定论。**
 """
 
 from __future__ import annotations
@@ -928,18 +931,37 @@ def main() -> int:
         f"末={pts_series[-1] if len(pts_series) else None} "
         f"max={pts_series.max() if len(pts_series) else None}")
 
-    # (a) 单帧毛刺:与前后邻居都差很远,但前后邻居彼此接近 -> 该帧读错
-    glitch_idx = []
+    # (a) 稳健去毛刺:分数序列是「阶梯 + 小额扣分」,任何一帧内跨好几档的跳变都是 OCR
+    #     错读。用「合理性 + 持续性」逐帧判定:不合理就沿用上一个可信值。
+    raw_steps = np.diff(pts_series) if len(pts_series) > 1 else np.array([], dtype=np.int64)
+    plaus_ref = raw_steps[(raw_steps > 100) & (raw_steps < 1000)]
+    unit0 = int(np.median(plaus_ref)) if plaus_ref.size else 373
+    plaus_max = int(6 * unit0)
+    good = np.zeros(len(pts_series), dtype=bool)
     clean = pts_series.copy()
-    for i in range(1, len(pts_series) - 1):
-        if (abs(int(pts_series[i]) - int(pts_series[i - 1])) > 400
-                and abs(int(pts_series[i]) - int(pts_series[i + 1])) > 400
-                and abs(int(pts_series[i + 1]) - int(pts_series[i - 1])) < 400):
+    good[0] = True
+    last = int(pts_series[0])
+    pend: list[int] = []
+    glitch_idx = []
+    for i in range(1, len(pts_series)):
+        d = int(pts_series[i]) - last
+        if -100 <= d <= plaus_max:
+            good[i] = True
+            last = int(pts_series[i])
+            pend = []
+        else:
+            clean[i] = last
             glitch_idx.append(i)
-            clean[i] = pts_series[i - 1]
-    log(f"  单帧毛刺(前后邻居一致、本帧跳变>400)= {len(glitch_idx)} 帧: " +
-        ", ".join(f"t={t_series[i]:.2f} {int(pts_series[i])}(邻 {int(pts_series[i-1])})"
-                  for i in glitch_idx))
+            pend.append(i)
+            # 连续 3 帧都是同一个「不合理」值 -> 分数确实跳了(或模板系统性错),接受它
+            if len(pend) >= 3 and len({int(pts_series[j]) for j in pend[-3:]}) == 1:
+                good[i] = True
+                last = int(pts_series[i])
+                pend = []
+    log(f"  步进合理性上限 plaus_max = {plaus_max}(=6x 初估单位分 {unit0});"
+        f" 判为 OCR 毛刺并沿用前值的帧 = {len(glitch_idx)}")
+    log("  毛刺帧(视频时间, 原读值, 沿用值): " + ", ".join(
+        f"({t_series[i]:.2f},{int(pts_series[i])}->{int(clean[i])})" for i in glitch_idx[:20]))
 
     # (b) 平台
     runs = []
@@ -1021,20 +1043,28 @@ def main() -> int:
     log(f"  单次命中得分分布 = {json.dumps(per_hit_stats, ensure_ascii=False)}")
 
     # 每球得分是否与「距上一球的间隔」相关(时间加权模型检验)
+    # 用**平台步进**的间隔,而不是合成出来的命中时间戳(多命中步进会被塞进 1ms 假间隔)
     tw = None
-    if len(hit_times) > 20:
-        ht = np.array(sorted(hit_times))
-        iv = np.diff(ht)
-        aw = np.array([per_hit_awards[i] for i in range(min(len(iv), len(per_hit_awards)))])
-        if aw.size > 10:
-            cc = float(np.corrcoef(iv[:aw.size], aw[:aw.size])[0, 1])
-            tw = {"n_pairs": int(aw.size), "pearson_r_interval_vs_award": cc,
-                  "interval_p10": float(np.percentile(iv, 10)),
-                  "interval_p50": float(np.percentile(iv, 50)),
-                  "interval_p90": float(np.percentile(iv, 90))}
-            log(f"  每球得分 vs 间隔: r={cc:+.3f}(n={aw.size}),"
-                f" 间隔 p10/p50/p90 = {tw['interval_p10']:.3f}/{tw['interval_p50']:.3f}/"
-                f"{tw['interval_p90']:.3f}s")
+    if unit:
+        single_mask = (steps >= int(0.75 * unit)) & (steps <= int(1.25 * unit))
+        if int(single_mask.sum()) > 20:
+            idxs = np.where(single_mask)[0]
+            iv = np.diff(step_t[idxs])
+            aw = steps[idxs[1:]]
+            keep = iv < 1.0
+            if int(keep.sum()) > 15:
+                cc = float(np.corrcoef(iv[keep], aw[keep])[0, 1])
+                tw = {"n_pairs": int(keep.sum()), "pearson_r_interval_vs_award": cc,
+                      "interval_p10_s": float(np.percentile(iv[keep], 10)),
+                      "interval_p50_s": float(np.percentile(iv[keep], 50)),
+                      "interval_p90_s": float(np.percentile(iv[keep], 90)),
+                      "award_std": float(aw[keep].std()),
+                      "award_range_p5_p95": [float(np.percentile(aw[keep], 5)),
+                                             float(np.percentile(aw[keep], 95))]}
+                log(f"  每球得分 vs 上一球间隔: r={cc:+.3f}(n={int(keep.sum())});"
+                    f" 间隔 p10/p50/p90 = {tw['interval_p10_s']:.3f}/{tw['interval_p50_s']:.3f}/"
+                    f"{tw['interval_p90_s']:.3f}s;得分 p5-p95 = "
+                    f"{tw['award_range_p5_p95'][0]:.0f}-{tw['award_range_p5_p95'][1]:.0f}")
 
     # 命中率随时间(5s 分箱)
     buckets = []
@@ -1096,9 +1126,10 @@ def main() -> int:
             f"p90={(np.percentile(noise_tail,90) if noise_tail.size else float('nan')):.3f} "
             f"max={(noise_tail.max() if noise_tail.size else float('nan')):.3f}")
 
-    def motion_metrics(thr_px, lo, hi):
-        m = (gtimes[:n_total] >= lo) & (gtimes[:n_total] <= hi) & ~np.isnan(shifts[:n_total])
-        s = shifts[:n_total][m]
+    def motion_metrics(thr_px, lo, hi, series=None):
+        ser = shifts[:n_total] if series is None else series
+        m = (gtimes[:n_total] >= lo) & (gtimes[:n_total] <= hi) & np.isfinite(ser)
+        s = ser[m]
         if s.size == 0:
             return None
         mv = s > thr_px
@@ -1148,6 +1179,21 @@ def main() -> int:
                 f"dwell_p50={None if mm['dwell_p50_ms'] is None else round(mm['dwell_p50_ms'],1)}ms "
                 f"runs={mm['n_stationary_runs']}")
     main_m = next((m for m in sens if abs(m["factor"] - 1.0) < 1e-9), None)
+
+    # 平滑稳健性检验:位移序列做 k 帧中值滤波后再判。若 duty 大幅下降,说明「运动」里
+    # 有相当一部分是单帧噪声(靶子生灭 / 命中特效造成的伪位移),dwell 也就不可信。
+    smooth_sens = []
+    for w in (3, 5):
+        pad = w // 2
+        sp = np.pad(shifts[:n_total], (pad, pad), mode="edge")
+        sm = np.array([np.nanmedian(sp[i:i + w]) for i in range(n_total)])
+        mm = motion_metrics(thr0, round_start, round_end, series=sm)
+        if mm:
+            mm["median_window"] = w
+            smooth_sens.append(mm)
+            log(f"   中值滤波 w={w} @thr0 -> duty={mm['duty']:.3f} "
+                f"dwell_p50={None if mm['dwell_p50_ms'] is None else round(mm['dwell_p50_ms'],1)}ms "
+                f"runs={mm['n_stationary_runs']}")
 
     shift_all = shifts[:n_total]
     csv_m = os.path.join(OUTDIR, "motion_timeline.csv")
@@ -1287,6 +1333,7 @@ def main() -> int:
                 f"3x 静帧噪声地板中位({3*med_tail:.3f}px) 与 0.25px/deg({0.25*px_per_deg:.3f}px) 取大",
             "primary": main_m,
             "sensitivity": sens,
+            "smoothing_robustness": smooth_sens,
         },
     }
     sp = os.path.join(OUTDIR, "hud_summary.json")

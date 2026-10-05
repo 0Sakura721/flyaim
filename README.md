@@ -368,7 +368,7 @@ tools/                      Lead 的诊断与标定脚本
   aimlab_play.py            任务内会话:collect/seek/fly/hybrid 真游戏闭环(D29)
   aimlab_train_ingame.py    游戏域读出层重训(岭回归,连接组冻结)
   aimlab_sim3d.py           模拟 FPS 语义彩排(不动鼠标,正负对照 + 增益容差)
-  aimlab_smoke.py           桥接层冒烟测试(178 项)
+  aimlab_smoke.py           桥接层冒烟测试(183 项)
 ```
 
 ---

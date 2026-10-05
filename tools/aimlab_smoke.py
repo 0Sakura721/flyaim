@@ -1903,6 +1903,46 @@ def t25_round_gate_and_time_calib() -> None:
           f"停用必须留下可读原因(实测 {cal2.note!r})")
 
 
+def t26_ref_ground_truth_fixture() -> None:
+    """D42.11 守卫:理想基准地面真值 fixture 必须保留 **130,709 / 96%**。
+
+    守的是 Lead 自己犯过的错:用 `ffmpeg -vf fps=1` 抽帧时**假设了 t = cell**,
+    而该滤镜实测有 **+0.45s 相位**,于是终局值 130,709(出现在 t≈61.60)
+    **整个落在 cell 61 与 cell 62 之间被漏掉**,Lead 遂把中间值 130,335 当成
+    终局,还"纠正"了用户本来正确的记录 —— 并且推送了出去。
+
+    fixture 用 `source` 列区分两段:`grid_fps1`(轨迹,相位 +0.45s)
+    与 `tail_ss`(**终局值的唯一权威来源**)。
+    """
+    import csv as _csv
+
+    p = ROOT / "tools" / "fixtures" / "ref_hud_ground_truth.csv"
+    if not p.exists():
+        check("T26.fixture_exists", False, f"缺 {p}")
+        return
+    with p.open(encoding="utf-8") as fh:
+        rows = list(_csv.DictReader(fh))
+    grid = [r for r in rows if r["source"] == "grid_fps1" and r["points"]]
+    tail = [r for r in rows if r["source"] == "tail_ss" and r["points"]]
+    check("T26.fixture_has_both_sources", bool(grid) and bool(tail),
+          f"必须同时含 grid_fps1 与 tail_ss 两段(实测 {len(grid)}/{len(tail)})")
+    if not grid or not tail:
+        return
+    gv = [int(r["points"]) for r in grid]
+    tv = [int(r["points"]) for r in tail]
+    check("T26.final_is_130709", tv[-1] == 130709,
+          f"终局必须为 130,709(实测 {tv[-1]})—— 固定的是**用户原始记录**,"
+          f"防止再被上涨途中的中间值顶替")
+    check("T26.final_acc_96", tail[-1]["acc_pct"] == "96",
+          f"终局 ACC 必须为 96%(实测 {tail[-1]['acc_pct']})")
+    check("T26.tail_monotonic", all(b >= a for a, b in zip(tv, tv[1:])),
+          f"尾部点数必须单调不减(实测 {tv})")
+    check("T26.grid_misses_final", gv[-1] < tv[-1],
+          f"**网格末值必须严格小于尾部终局** —— 这正是「fps=1 相位漏掉终局」"
+          f"的证据本身(网格 {gv[-1]} < 尾部 {tv[-1]})。"
+          f"若两者相等,说明有人又把网格值当成终局了")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--screen", action="store_true", help="加测真实屏幕捕获(只读)")
@@ -1936,6 +1976,7 @@ def main() -> int:
     t23_score_hud_ocr()
     t24_hud_diagnostics()
     t25_round_gate_and_time_calib()
+    t26_ref_ground_truth_fixture()
     if args.screen:
         t7_screen()
     if args.cursor_check:

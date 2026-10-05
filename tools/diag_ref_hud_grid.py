@@ -84,51 +84,90 @@ def extract_frames() -> list[Path]:
     return sorted(tmp.glob("s_*.png"))
 
 
+# --- 网格法本身的已知偏差(2026-10-06 踩过,必须写下来)----------------------
+# `ffmpeg -vf fps=1` 有自己的相位:实测 cell k 落在 **t ≈ k + 0.45s**,不是 t = k。
+# 后果:cell 61 落在 t≈61.45(分数正好经过 130,335),而**真正的终局值 130,709
+# 出现在 t≈61.60,并且 HUD 在 t≈62.2 就消失了 —— 恰好落在 cell 61 与 cell 62
+# 之间被采样漏掉**。Lead 因此把 130,335 当成了终局,还据此"纠正"了用户原始
+# 记录里的 130,709 —— 那个纠正是错的(DECISIONS D42.11)。
+# 教训:**用固定相位抽样去读"末值",必须自己验相位,不能假设它对齐。**
+GRID_PHASE_S = 0.45
+
+# --- 密集尾部读数(0.15s 步长,-ss 精确抽帧)-------------------------------
+# **终局值的唯一权威来源。** 它给出了网格法漏掉的那几帧,并暴露了
+# 「TIME 已经是 00:00,但分数仍在上涨」这个此前没人注意的事实。
+TAIL: list[tuple[float, int | None, str | None, int | None]] = [
+    (61.00, 129221, "00:00", 95),
+    (61.15, 129596, "00:00", 95),
+    (61.30, 129971, "00:00", 95),
+    (61.45, 130335, "00:00", 95),
+    (61.60, 130709, "00:00", 96),
+    (61.75, 130709, "00:00", 96),
+    (61.90, 130709, "00:00", 96),
+    (62.05, 130709, "00:00", 96),
+    (62.20, None, None, None),        # HUD 已消失(白像素 807 -> 0)
+]
+FINAL_POINTS = 130709                 # 权威终局值(见上)
+FINAL_ACC = 96
+
+
 def _mmss(s: str) -> int:
     m, sec = s.split(":")
     return int(m) * 60 + int(sec)
 
 
 def write_ground_truth(frames: list[Path]) -> None:
-    """落盘目检读数 + 自洽性自检(单调性、倒计时递减、终局值)。"""
+    """落盘目检读数(网格 + 密集尾部)+ 自洽性自检。
+
+    两段来源都写进同一个 CSV,用 `source` 列区分:
+        grid_fps1  逐秒网格(t ≈ cell + GRID_PHASE_S,±0.5s)
+        tail_ss    密集尾部(-ss 精确,权威)
+    """
     if len(frames) != len(READINGS):
         print(f"⚠️ 帧数 {len(frames)} != 读数条数 {len(READINGS)},跳过落盘")
         return
-    rows = ["t_video_s,points,time_disp,time_s,acc_pct,read_by"]
+    rows = ["source,t_s,points,time_disp,time_s,acc_pct,read_by"]
     for i, (pts, tdisp, acc) in enumerate(READINGS):
         ts = "" if tdisp is None else _mmss(tdisp)
-        rows.append(f"{i},{'' if pts is None else pts},{tdisp or ''},{ts},"
+        rows.append(f"grid_fps1,{i + GRID_PHASE_S:.2f},"
+                    f"{'' if pts is None else pts},{tdisp or ''},{ts},"
                     f"{'' if acc is None else acc},lead-visual")
+    for t, pts, tdisp, acc in TAIL:
+        ts = "" if tdisp is None else _mmss(tdisp)
+        rows.append(f"tail_ss,{t:.2f},{'' if pts is None else pts},"
+                    f"{tdisp or ''},{ts},{'' if acc is None else acc},lead-visual")
     TRUTH_CSV.parent.mkdir(parents=True, exist_ok=True)
-    TRUTH_CSV.write_text("\n".join(rows) + "\n", encoding="utf-8")
-    print(f"落盘 {TRUTH_CSV}({len(READINGS)} 行,来源=目检)")
-    # 兼容旧路径:早期版本把 CSV 写在 .cache/,留一份拷贝避免旧引用失效
-    (OUT / "hud_ground_truth.csv").write_text("\n".join(rows) + "\n",
-                                              encoding="utf-8")
+    body = "\n".join(rows) + "\n"
+    TRUTH_CSV.write_text(body, encoding="utf-8")
+    print(f"落盘 {TRUTH_CSV}({len(READINGS)} 网格 + {len(TAIL)} 尾部 = "
+          f"{len(rows) - 1} 行数据,来源=目检)")
+    (OUT / "hud_ground_truth.csv").write_text(body, encoding="utf-8")
 
     # ---- 自洽性自检:这些是"读数可信"的必要条件 ----
     pts = [p for p, _, _ in READINGS if p is not None]
     tis = [_mmss(t) for _, t, _ in READINGS if t is not None]
     ok_mono = all(b >= a for a, b in zip(pts, pts[1:]))
-    # ⚠️ 不能断言"从头就逐秒 -1":开局前 2 秒 HUD 已显示 `01:00` 但倒计时**尚未
-    # 启动**(实测第 0、1 秒都是 01:00)。所以正确口径是:单调不增,且**从第一次
-    # 下降之后**严格每步 -1。
     drops = [i for i in range(1, len(tis)) if tis[i] < tis[i - 1]]
     first_drop = drops[0] if drops else len(tis)
     ok_clk = (all(a >= b for a, b in zip(tis, tis[1:]))
               and all(a - b == 1 for a, b in zip(tis, tis[1:]) if a > b))
-    print(f"自检 点数单调不减: {'✅' if ok_mono else '❌'}  "
+    print(f"自检 网格点数单调不减: {'✅' if ok_mono else '❌'}  "
           f"({pts[0]} → {pts[-1]})")
     print(f"自检 倒计时钟: {'✅' if ok_clk else '❌'}  "
           f"({tis[0]}s → {tis[-1]}s,共 {len(tis)} 个读数)")
-    print(f"自检 **开局前置期**: 前 {first_drop} 秒 HUD 显示 {tis[0]}s 但时钟未起跳"
-          f"(倒计时从第 {first_drop} 秒的 {tis[first_drop]}s 才开始)")
-    print(f"     → 人手这一局的「任务真正开始」时刻 ≈ t={first_drop}s;"
-          f"与 d42-score 局「读数恰好只在前 2 秒有效」的时间点吻合")
-    # 分数增长速率(按 10 秒窗口)
-    print("自检 10 秒窗口得分(应大致平稳,不该有单调衰减):")
+    print(f"自检 **开局前置期**: 前 {first_drop} 秒 HUD 显示 {tis[0]}s 但时钟未起跳")
+    # 终局:必须用密集尾部,不能用网格(网格漏掉了它 —— 见 GRID_PHASE_S 说明)
+    tail_pts = [p for _, p, _, _ in TAIL if p is not None]
+    ok_final = tail_pts and tail_pts[-1] == FINAL_POINTS
+    print(f"自检 **终局值来自密集尾部**: {tail_pts[-1] if tail_pts else '?'} "
+          f"(期望 {FINAL_POINTS}) {'✅' if ok_final else '❌'}")
+    print(f"     ⚠️ 网格法只到 {pts[-1]} —— 它漏掉了 t≈61.6 之后的那一截,"
+          f"因为 fps=1 的相位是 +{GRID_PHASE_S}s 而 HUD 在 t≈62.2 消失")
+    print(f"     ⚠️ 且 TIME 早已是 00:00 —— **分数在计时结束后仍继续上涨**,"
+          f"读「末值」必须多抽几帧,不能只抽到 00:00 就停")
     by = {t: p for p, t, _ in
           [(p, _mmss(tt), a) for p, tt, a in READINGS if p is not None and tt]}
+    print("自检 10 秒窗口得分(应大致平稳):")
     for t in (50, 40, 30, 20, 10, 0):
         if t in by and (t + 10) in by:
             print(f"    {t+10:>2}s → {t:>2}s : {by[t] - by[t+10]:>6d} 分")
