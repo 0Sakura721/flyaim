@@ -24,6 +24,7 @@ action(push -> arena.step),用于在没有游戏/没有屏幕的情况下彩排�
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import Any
 
@@ -283,37 +284,47 @@ def _resize_rgb(rgb: np.ndarray, out_size: tuple[int, int] | None) -> np.ndarray
 # 因此全局缓存一个实例;region 是 grab 时参数,一个实例可服务所有区域。
 _DXCAM_CACHE: dict = {}
 
+# 🔴 相机**不是线程安全的**,而 D42.7 起它真的会被两个线程同时用:
+#     - 捕获线程:DualWindowSource 读全屏窗/中心窗;
+#     - 主线程  :HudStrip 每 score_every 拍读 HUD 条(D42 分数闭环)。
+# 在 D42.7 之前不存在这种并发(两个 ScreenCapture 是**同一个捕获线程**交替用的),
+# 所以此前没暴露。这里用一把**进程级可重入锁**把 create 与 grab 都串起来 ——
+# 粒度取"整个 grab 调用"而不是"取帧缓冲",因为 dxcam 内部会改自身状态。
+# 代价:主线程读 HUD 最多等一次捕获抓帧(实测 8~13ms),6Hz 下可忽略。
+_DXCAM_LOCK = threading.RLock()
+
 
 def _get_dd_camera(output_color: str = "BGRA"):
-    """取(或创建)进程级 bettercam/dxcam 相机单例。"""
-    if output_color in _DXCAM_CACHE:
-        return _DXCAM_CACHE[output_color]
-    import ctypes
+    """取(或创建)进程级 bettercam/dxcam 相机单例(线程安全)。"""
+    with _DXCAM_LOCK:
+        if output_color in _DXCAM_CACHE:
+            return _DXCAM_CACHE[output_color]
+        import ctypes
 
-    try:  # bettercam/dxcam 的 region 校验用物理像素,必须先声明 DPI 感知
-        ctypes.windll.user32.SetProcessDPIAware()
-    except Exception:
-        pass
-    cam, name = None, None
-    try:
-        import bettercam
-
-        cam = bettercam.create(output_color=output_color)
-        name = "bettercam"
-    except ImportError:
-        pass
-    if cam is None:
-        try:
-            import dxcam
-
-            cam = dxcam.create(output_color=output_color)
-            name = "dxcam"
+        try:  # bettercam/dxcam 的 region 校验用物理像素,必须先声明 DPI 感知
+            ctypes.windll.user32.SetProcessDPIAware()
         except Exception:
-            cam = None
-    if cam is None:
-        raise RuntimeError("bettercam/dxcam 均不可用")
-    _DXCAM_CACHE[output_color] = (cam, name)
-    return _DXCAM_CACHE[output_color]
+            pass
+        cam, name = None, None
+        try:
+            import bettercam
+
+            cam = bettercam.create(output_color=output_color)
+            name = "bettercam"
+        except ImportError:
+            pass
+        if cam is None:
+            try:
+                import dxcam
+
+                cam = dxcam.create(output_color=output_color)
+                name = "dxcam"
+            except Exception:
+                cam = None
+        if cam is None:
+            raise RuntimeError("bettercam/dxcam 均不可用")
+        _DXCAM_CACHE[output_color] = (cam, name)
+        return _DXCAM_CACHE[output_color]
 
 
 class ScreenCapture:
@@ -339,6 +350,8 @@ class ScreenCapture:
         region: tuple[int, int, int, int] | None = None,
         out_size: tuple[int, int] | None = (640, 480),
         backend: str = "auto",
+        grab_retry: int = 0,
+        grab_retry_ms: float = 3.0,
     ) -> None:
         if region is None:
             region = centered_region(primary_monitor_size(), (640, 480))
@@ -346,12 +359,19 @@ class ScreenCapture:
         if len(self.region) != 4:
             raise ValueError(f"region 必须是 (left, top, width, height),收到 {region}")
         self.out_size = None if out_size is None else (int(out_size[0]), int(out_size[1]))
+        # 见 _mk_dxcam 的说明:Desktop Duplication 只在**有新帧**时返回图像。
+        # 若同一相机被两个线程共用(捕获线程高频 + HudStrip 低频),低频方会被
+        # 高频方"抢光"所有新帧,从而长期拿不到首帧。有界重试给低频方一次机会。
+        # 默认 0 = 保持旧行为不变(热路径不引入额外延迟)。
+        self._grab_retry = max(0, int(grab_retry))
+        self._grab_retry_ms = max(0.0, float(grab_retry_ms))
         self.t_grab = 0.0
         self.seq = -1
+        self.n_stale = 0          # 复用上一帧的次数(该帧不是本次新抓的)
 
         self._backend = self._make_backend(str(backend).lower())
-        logger.info("ScreenCapture: region=%s out=%s backend=%s",
-                    self.region, self.out_size, self._backend[0])
+        logger.info("ScreenCapture: region=%s out=%s backend=%s retry=%d",
+                    self.region, self.out_size, self._backend[0], self._grab_retry)
 
     # -- 后端 ---------------------------------------------------------------
 
@@ -396,14 +416,30 @@ class ScreenCapture:
         l, t, w, h = self.region
 
         def grab() -> np.ndarray:
-            # region 是 (l, t, r, b);无新帧时复用上一帧(与游戏帧率解耦)
-            f = cam.grab(region=(l, t, l + w, t + h))
+            # region 是 (l, t, r, b);无新帧时复用上一帧(与游戏帧率解耦)。
+            #
+            # ⚠️ Desktop Duplication 只在**有新帧**时返回图像(None = 本刷新周期
+            # 已被取走)。所以当同一相机被两个线程共用时(捕获线程高频 +
+            # HudStrip 低频),低频方会被高频方抢光所有新帧 —— 实测主线程
+            # 59 次读里 12 次拿不到首帧(D42.7d)。`grab_retry` 让调用方声明
+            # "我愿意多等几个刷新周期"。**睡眠必须在锁外** —— 否则会把
+            # 捕获线程一起拖住。
+            f = None
+            for attempt in range(self._grab_retry + 1):
+                with _DXCAM_LOCK:
+                    f = cam.grab(region=(l, t, l + w, t + h))
+                if f is not None:
+                    break
+                if attempt < self._grab_retry:
+                    time.sleep(self._grab_retry_ms / 1000.0)
             if f is None:
                 f = getattr(grab, "_last", None)
                 if f is None:
                     raise RuntimeError("尚无首帧")
+                grab._stale = True      # type: ignore[attr-defined]
                 return f
             grab._last = f  # type: ignore[attr-defined]
+            grab._stale = False         # type: ignore[attr-defined]
             return np.asarray(f, dtype=np.uint8)
 
         return grab
@@ -465,6 +501,9 @@ class ScreenCapture:
         else:
             frame = _resize_rgb(np.asarray(raw, dtype=np.uint8), self.out_size)
         read_ms = (time.perf_counter() - t0) * 1000.0
+        stale = bool(getattr(grab, "_stale", False))
+        if stale:
+            self.n_stale += 1
         self.seq += 1
         return frame, {
             "seq": self.seq,
@@ -472,6 +511,9 @@ class ScreenCapture:
             "grab_ms": round(grab_ms, 3),
             "read_ms": round(read_ms, 3),
             "t_grab": self.t_grab,
+            # True = 本次拿到的是**上一帧的复用**(本刷新周期已被别的调用取走)。
+            # HUD 读数若长期 stale,说明它看到的是旧画面,不是"与渲染同步"。
+            "grab_stale": stale,
         }
 
     def push(self, action: np.ndarray) -> None:  # 屏幕源不消费 action
@@ -481,3 +523,150 @@ class ScreenCapture:
         # 相机是进程级单例,不 release(release 后 bettercam 仍返回旧实例,
         # 会导致后续 ScreenCapture 全部 0 帧);进程退出时由 OS 回收。
         self._backend = None
+
+
+class DualWindowSource:
+    """搜索窗(全屏) / 跟踪窗(中心小窗)自动切换的帧源(2026-10-05)。
+
+    ===========================================================================
+    为什么需要它 —— 这是「命中率低」层级的真因,不是调参能解决的
+    ===========================================================================
+    「中心窗」优化的前提是「靶已经在画面中心附近」。搜靶阶段这个前提**不成立**:
+
+        实测(2026-10-05 14:2x,目标帧):靶在全屏 (144, 48),半径 25px。
+          全屏检测          -> ok=True  (144,48)
+          中心窗 700        -> ok=False  (窗范围 x[610,1310] y[190,890])
+          中心窗 900        -> ok=False  (窗范围 x[510,1410] y[ 90,990])
+
+    靶在窗口**左 366px、上 42px** —— 完全在窗外。此前跑出的 play-cov900 那局
+    2152 帧 det-ok=0、|act| 全程 0,拍频 36Hz,相机对着空墙站 60 秒开火 0 次,
+    就是这条。而 play-smooth 那局能开火 117 次,**纯粹是运气**:当时相机碰巧
+    朝向靶,靶落在中心窗内。**同一份参数、同一份代码,结果 0 与 117 的差别
+    全在「靶是否恰好在窗外」** —— 这正说明中心窗方案在几何上是错的。
+
+    而全屏捕获贵(read 24.7ms vs 中心窗 3.6ms,且不缩放时像素 2.07M vs 0.49M)。
+    所以正确解法是**分阶段用不同的窗**,而不是二选一:
+
+        - 未锁定(搜靶):抓**全屏**,保证任意位置的靶都看得见;
+        - 已锁定(跟踪):抓**中心窗**,保住 7x 速度与原始像素精度。
+
+    锁定信号怎么来:看上一拍控制器写下的 `last_detection`,若 ok 且离中心
+    在 `lock_switch_px` 以内,就认为「已经锁上、可以切小窗」;否则回大窗。
+
+    诚实声明:本类只改变**送给控制器的画面范围**,不改变任何决策语义;
+    两个窗的**坐标都是各自窗内的局部坐标**,而控制器用的正是局部坐标
+    (误差 = 靶 - 本帧中心),所以切换不影响控制律的正确性。唯一需要
+    对齐的是开火层的 sticky 状态 —— 跨窗切换时靶的局部坐标会突变,
+    故切换时把 `meta["window_switched"]=True` 传给上层,由上层清 sticky。
+    """
+
+    backend = "dual-window"
+
+    def __init__(
+        self,
+        full_region: tuple[int, int, int, int],
+        center_size: int = 900,
+        *,
+        lock_switch_px: float = 260.0,
+        full_downsample_size: int | None = 960,
+        backend: str = "auto",
+        controller: Any | None = None,
+    ) -> None:
+        """full_region: 全屏 region(左,上,宽,高)。
+        center_size: 跟踪窗边长(裁在全屏 region 的几何中心)。
+        lock_switch_px: 靶离窗中心多近算「已锁定」→ 切小窗。
+        full_downsample_size: 搜靶全屏帧的降采样边长(None=不缩放,更慢但更准)。
+        controller: 用来读 last_detection 判断是否已锁定;可后置 set_controller。
+        """
+        self.full_region = tuple(int(v) for v in full_region)
+        self.center_size = int(center_size)
+        self.lock_switch_px = float(lock_switch_px)
+        self._down = None if full_downsample_size is None else int(full_downsample_size)
+        self._controller = controller
+
+        fl, ft, fw, fh = self.full_region
+        self._center_region = (
+            fl + (fw - self.center_size) // 2,
+            ft + (fh - self.center_size) // 2,
+            self.center_size,
+            self.center_size,
+        )
+        # 搜靶窗:全屏,但可选降采样(降采样只影响像素量,坐标由 ScreenCapture
+        # 缩放到 out_size 后再 ×ds 还原 —— 这里 down 由控制器侧负责,故只用 out)
+        self._full_cap = ScreenCapture(
+            region=self.full_region, out_size=None, backend=backend
+        )
+        self._center_cap = ScreenCapture(
+            region=self._center_region, out_size=None, backend=backend
+        )
+        # 当前生效的窗:True=全屏(搜靶)
+        self.searching = True
+        self.n_switches = 0
+        self.n_full_reads = 0
+        self.n_center_reads = 0
+        self._last_read_ms = 0.0
+
+    def set_controller(self, controller: Any) -> None:
+        self._controller = controller
+
+    # -- 判定:该用哪个窗 ----------------------------------------------------
+
+    def _target_in_full(self) -> bool:
+        """上一拍检测若 ok 且落在中心窗内(按它自己的坐标判断),说明锁上了。
+
+        `last_detection` 的坐标与**上一拍用的窗**同口径:上一拍用全屏时是
+        全屏坐标,用中心窗时是窗内坐标。所以这里必须记住上一拍用的窗。
+        """
+        ctrl = self._controller
+        if ctrl is None:
+            return False
+        det = getattr(ctrl, "last_detection", None)
+        if det is None or not getattr(det, "ok", False):
+            return False
+        if self.searching:
+            # 上一拍是全屏:靶必须落在中心窗矩形内才能切小窗
+            cl, ct, cw, ch = self._center_region
+            fl, ft, _, _ = self.full_region
+            # det 坐标是「降采样后的帧坐标」;本类不降采样(交给控制器),
+            # 故直接用全屏坐标比较
+            return (cl - fl) <= det.cx <= (cl - fl + cw) and \
+                   (ct - ft) <= det.cy <= (ct - ft + ch)
+        # 上一拍已是中心窗:只要还在窗内(离中心不算太远)就继续用
+        h = w = self.center_size
+        return 0 <= det.cx <= w and 0 <= det.cy <= h
+
+    def read(self) -> tuple[np.ndarray, dict]:
+        want_full = not self._target_in_full()
+        switched = want_full != self.searching
+        if switched:
+            self.searching = want_full
+            self.n_switches += 1
+        cap = self._full_cap if self.searching else self._center_cap
+        frame, meta = cap.read()
+        if self.searching:
+            self.n_full_reads += 1
+        else:
+            self.n_center_reads += 1
+        meta = dict(meta)
+        meta["window"] = "full" if self.searching else "center"
+        meta["window_switched"] = bool(switched)
+        meta["center_region"] = self._center_region
+        # 搜靶窗是全屏(较大),控制器应据 window 字段选更激进的 downsample;
+        # 这里只负责把窗类型告诉下游,**不做缩放**(缩放交给 detect.downsample,
+        # 它已经把坐标/半径/面积原样还原回本窗口径 —— 在 source 里再缩一次
+        # 会让坐标口径与控制器约定不一致)。
+        return frame, meta
+
+    def push(self, action: np.ndarray) -> None:
+        del action
+
+    def close(self) -> None:
+        try:
+            self._full_cap.close()
+        finally:
+            self._center_cap.close()
+
+    # 供桥接层查询
+    @property
+    def region(self):
+        return self.full_region
