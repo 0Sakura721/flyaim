@@ -364,6 +364,10 @@ tools/                      Lead 的诊断与标定脚本
   aimlab_bridge.py          桥接主入口(屏幕→网络→鼠标)
   aimlab_gain.py            增益标定(灵敏度/cm/360 → counts/360,D27)
   aimlab_calibrate.py       端到端定标向导(+指针路径探针,PASS/FAIL,D27/D28)
+  aimlab_probe.py           定位窗口 + 找靶色 + 目检标注图(只读)
+  aimlab_play.py            任务内会话:collect/seek/fly/hybrid 真游戏闭环(D29)
+  aimlab_train_ingame.py    游戏域读出层重训(岭回归,连接组冻结)
+  aimlab_sim3d.py           模拟 FPS 语义彩排(不动鼠标,正负对照 + 增益容差)
   aimlab_smoke.py           桥接层冒烟测试(64 项)
 ```
 

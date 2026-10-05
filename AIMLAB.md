@@ -59,6 +59,10 @@
 | `tools/aimlab_bridge.py` | 主入口:三种模式(见下) |
 | `tools/aimlab_gain.py` | 增益标定(灵敏度/cm/360 → counts/360,见 D27),写 gain.json |
 | `tools/aimlab_calibrate.py` | 端到端定标向导:3 个数 → counts/360 + 指针探针 + 可选游戏内校验 + PASS/FAIL |
+| `tools/aimlab_probe.py` | 定位窗口 + 找靶色 + 目检标注图(只读,不注入) |
+| `tools/aimlab_play.py` | **任务内会话**:collect/seek/fly/hybrid 四模式,真游戏里跑闭环并采数据 |
+| `tools/aimlab_train_ingame.py` | 游戏域读出层重训:采集的 (DN, action) 对 → 岭回归 → readout_ingame.npz |
+| `tools/aimlab_sim3d.py` | 复刻真实 FPS 语义的模拟域彩排(不动鼠标,正负对照 + 增益容差) |
 | `tools/aimlab_smoke.py` | 64 项冒烟检查(零依赖 GPU/游戏/注入) |
 
 ---
@@ -318,7 +322,50 @@ Aim Lab Gridshot 默认球约 2~3° 角直径,**接不了**。做法:自定义�
 这意味着**标定的容错带很宽**,你不需要把 cm/360 量得准 —— 但你需要它**不错一个
 数量级的量级**(引擎系数给错 3.2 倍、Aim Lab DPI 缩放漏补 4 倍,都会真的坏掉)。
 
-### 10.3 真机三步(第 3 步才会动鼠标)
+### 10.3 整条路线:从零到"在 Aim Lab 里跑起来"
+
+| 阶段 | 命令 | 动鼠标? | 目的 |
+|---|---|---|---|
+| 0 标定 | `aimlab_calibrate.py` | 探针会(可 `--no-probe`) | 得 `gain.json`,判定 PASS |
+| 1 摆位 | *人工*:切前台 + 无边框 + 自定义靶 ≥138px | 否 | 让靶进得了复眼 |
+| 2 目检 | `aimlab_probe.py` + `aimlab_bridge.py --sink null` | 否 | 确认靶被框住、方向对 |
+| 3 试注入 | `aimlab_bridge.py --sink sendinput --max-counts 150` | **是** | 小幅度验方向/幅度 |
+| 4 训练 | `aimlab_play.py`(collect/train/fly/hybrid) | **是** | 游戏域采集 + 重训读出 |
+
+其中 0 / 2 阶段完全零风险,可以反复跑;1 是唯一需要你动手摆的;
+3 / 4 会真的接管鼠标 —— 跑之前把手从鼠标上拿开。
+
+### 10.4 前置:在 Aim Lab 里怎么摆(否则接了也白接)
+
+D26 定下的硬边界是**靶角直径 ≥ 11°**(24×32 复眼)。在真实屏幕上它等于:
+
+```
+px/度 = f · π/180,   f = (W/2) / tan(FOV/2)
+FOV=106.26 下:  1920 宽 -> 12.57 px/度  -> 11° 需 138 px 直径
+                2560 宽 -> 16.76 px/度  -> 11° 需 184 px 直径
+```
+
+**默认任务是接不了的。** Gridshot 的球约 2~3°(≈30px),差一个数量级。
+正确做法是在 Aim Lab 的「自定义专区 → 自定义训练任务」里建一个:
+
+| 参数 | 该设成 | 为什么 |
+|---|---|---|
+| 靶直径 | **≥138px(1920 宽)** | 低于此复眼分辨不出,响应过不了 6Hz 门限 |
+| 靶移动 | **静止**或极慢 | 先证明"能瞄",再谈"能追" |
+| 背景 | 素净、无高对比杂物 | 减假阳性;别用 Countryside 那种花背景 |
+| 靶颜色 | 青/绿 优先 | 走 R8 短通路;红靶走 R7,`--target-hue` 要跟着改 |
+| 任务时长 | 够长(≥60s) | 闭环要几百拍才看得出收敛 |
+
+### 10.5 真机三步(第 3 步才会动鼠标)
+
+**两个必须由人在物理上做的事**(脚本做不了):
+
+1. **把 Aim Lab 切到前台。** `probe` 会检测"区域中心最顶层窗口"是不是
+   Aim Lab;不是就会明确告警"截到的是别的窗口"。实测本机第一次跑就撞上
+   这条(截到了 WorkBuddy 自己)。要么点一下 Aim Lab 让它置顶,要么用
+   `--no-focus` 前先手工 Alt+Tab。
+2. **窗口用无边框 / 全屏窗口化。** 有标题栏和边框时,客户区坐标和画面
+   对不齐,检测框会整体偏移。
 
 **示例参数已按本机实测填好**(CS2 / sens=2 / 800 DPI / 16:9,见 D28):
 
@@ -362,7 +409,34 @@ $py tools/aimlab_bridge.py --controller eye --source screen --window aimlab \
 #   确认方向与幅度后去掉 --max-counts 限制,拉长 --seconds
 ```
 
-### 10.4 验收标准与必须随结果报告的四件套
+### 10.6 第 4 步(可选):在 Aim Lab 里**在线训练**读出层
+
+`tools/aimlab_play.py` 支持直接在真游戏里跑完整闭环并采集训练数据 ——
+这是"游戏域 DAgger",解决 D18/D19「2D 靶场调通、搬进游戏就失效」的分布偏移。
+
+```bash
+# ① 采集:seek 导师在真游戏里打靶,同时记录真实帧的 (DN 放电率, action) 对
+$py tools/aimlab_play.py --mode collect --npz-out flyaim/runs/bridge/collect_1.npz
+#    可多跑几次累积:collect_1.npz, collect_2.npz ...
+
+# ② 重训读出层(连接组冻结,只学 Readout 线性层;岭回归)
+$py tools/aimlab_train_ingame.py --npz flyaim/runs/bridge/collect_*.npz \
+      --out flyaim/runs/bridge/readout_ingame.npz
+
+# ③ 用游戏域权重跑果蝇网络
+$py tools/aimlab_play.py --mode fly --readout flyaim/runs/bridge/readout_ingame.npz
+
+# ④ DAgger:action = seek + β·fly,让网络在自己造成的状态分布上继续学
+$py tools/aimlab_play.py --mode hybrid --beta 0.25
+#    另有 --mode seek(导师上限参照)、--no-trigger(纯瞄准不开火)
+```
+
+> ⚠️ **这四类模式都会真实移动并点击鼠标。** 保持 Aim Lab 前台、手离鼠标。
+> 前面的探测/标定/`--sink null` 全是只读,只有到这里才真的动。
+> ⚠️ 边界不变:eye/seek 是"任务有多难"的标尺,`fly` 才是被测臂 ——
+> 别把导师的成绩当成连接组的成绩(D25/D26 的边界在这里同样适用)。
+
+### 10.7 验收标准与必须随结果报告的四件套
 
 - 验收:`--sink null` 阶段遥测里**靶检测率 ≥ 90%**,且 `act` 方向与检测误差同向;
   `--sink sendinput` 阶段角误差单调下降并稳定在**靶角半径以内**。
