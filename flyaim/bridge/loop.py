@@ -66,12 +66,18 @@ class BridgeLoop:
         max_seconds: float | None = None,
         capture_stall_warn_s: float = 2.0,
         focus_watchdog_title: str | None = None,
+        on_beat: Any | None = None,
     ) -> None:
         self.source = source
         self.sink = sink
         self.controller = controller
         self.gain = gain
         self.telemetry = telemetry
+        # 逐拍回调(D39 录像/逐拍日志):on_beat(beat_idx, frame, det)。
+        # 在注入完成之后调用;frame 是本拍原始 RGB 帧(录像用),det 是
+        # controller.last_detection(Detection 或 None)。回调耗时直接吃
+        # 拍频,务必轻量(缩帧+字节流追加,不做任何重编码)。
+        self.on_beat = on_beat
         self.min_tick_interval_s = float(min_tick_interval_s)
         self.max_frames = None if max_frames is None else int(max_frames)
         self.max_seconds = None if max_seconds is None else float(max_seconds)
@@ -193,6 +199,17 @@ class BridgeLoop:
 
                 # -- 决策(网络拍)
                 t0 = time.perf_counter()
+                # 窗口切换通知(DualWindowSource 搜靶窗<->跟踪窗):
+                # 全屏窗与中心窗的**局部坐标原点不同**,切换那一拍靶的坐标会
+                # 突变 → 必须让控制器丢掉基于旧坐标的锁定/sticky 状态,否则
+                # 会把"新窗里的靶"误判成"换了靶"或把旧坐标当成同一个靶。
+                if meta.get("window_switched"):
+                    hook = getattr(self.controller, "on_window_switch", None)
+                    if callable(hook):
+                        try:
+                            hook()
+                        except Exception as exc:
+                            logger.warning("on_window_switch 失败: %s", exc)
                 action = np.asarray(
                     self.controller.act(frame), dtype=np.float32
                 ).reshape(2)
@@ -244,6 +261,14 @@ class BridgeLoop:
                         )
                 if meta.get("hit"):
                     hit_counts += 1  # 仅 ArenaSource 之类会报 hit 的源有效
+
+                # -- 逐拍回调(录像/诊断日志;异常不拖垮主循环)
+                if self.on_beat is not None:
+                    try:
+                        det = getattr(self.controller, "last_detection", None)
+                        self.on_beat(n_frames, frame, det)
+                    except Exception as exc:
+                        logger.warning("on_beat 失败(忽略): %s", exc)
 
                 # -- 焦点看门狗(每 ~2s)
                 if self.focus_watchdog_title and t_tick - last_focus_check > 2.0:
