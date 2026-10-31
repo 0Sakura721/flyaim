@@ -72,6 +72,8 @@ class _INPUT(ctypes.Structure):
 _INPUT_MOUSE = 0
 _INPUT_KEYBOARD = 1
 _KEYEVENTF_KEYUP = 0x0002
+_KEYEVENTF_SCANCODE = 0x0008
+_MAPVK_VK_TO_VSC = 0
 
 
 def pointer_accel_enabled() -> bool | None:
@@ -219,16 +221,81 @@ def click_at(x: int, y: int) -> bool:
     return ok
 
 
-def press_key(vk: int) -> bool:
-    """注入一次按键按下+抬起(如 VK 0x52 = R,Aim Lab 的"再练一次"热键)。"""
+# 命名键 -> VK 码(其余常用键靠下面的通用规则推)
+_VK_NAMED: dict[str, int] = {
+    "space": 0x20, "enter": 0x0D, "return": 0x0D, "esc": 0x1B,
+    "escape": 0x1B, "tab": 0x09, "backspace": 0x08, "shift": 0x10,
+    "ctrl": 0x11, "alt": 0x12, "up": 0x26, "down": 0x28,
+    "left": 0x25, "right": 0x27, "insert": 0x2D, "delete": 0x2E,
+    "home": 0x24, "end": 0x23, "pageup": 0x21, "pagedown": 0x22,
+}
+
+
+def vk_from_name(name: str | int) -> int:
+    """键名 -> VK 码。接受 `F6` / `f6` / `space` / `enter` / `r` / `0x75` / `117`。
+
+    **为什么要有它**(2026-10-06 实测教训):原先开局键被**写死**成 `0x52`(R),
+    注释还写着「Aim Lab 的"再练一次"热键」。实测在靶场里连按 7 次,TIME 全程是
+    `∞`,**根本没开局** —— 用户指出真正的键是 **F6**。
+    把键写死 = 每换一个游戏/版本就要改源码;做成可配置才不会再犯。
+    """
+    if isinstance(name, int):
+        return int(name)
+    s = str(name).strip().lower()
+    if not s:
+        raise ValueError("空键名")
+    try:                       # 直接给数字:0x75 / 117
+        return int(s, 0)
+    except ValueError:
+        pass
+    if s in _VK_NAMED:
+        return _VK_NAMED[s]
+    if s.startswith("f") and s[1:].isdigit():
+        n = int(s[1:])
+        if 1 <= n <= 24:
+            return 0x70 + (n - 1)          # F1=0x70 … F24=0x87
+    if len(s) == 1:
+        ch = s.upper()
+        if ("A" <= ch <= "Z") or ("0" <= ch <= "9"):
+            return ord(ch)
+    raise ValueError(
+        f"认不出的键名 {name!r}。可用:F1-F24 / 单个字母或数字 / "
+        f"{sorted(_VK_NAMED)} / 0x 十六进制(如 0x75)")
+
+
+def press_key(vk: int, use_scancode: bool = True) -> bool:
+    """注入一次按键按下+抬起。
+
+    ⚠️ **必须带扫描码**(2026-10-06 实测教训):首版只设 `wVk` 且 `dwFlags=0`。
+    **鼠标注入是验证过的**(开局握手:`300 计数 → 画面差 8.9/255`),但
+    **键盘注入从未被验证过** —— 而实测往 Aim Lab 发 F6(0x75)**6 次**,
+    `TIME` 全程是 `∞`,一次都没开局。高度怀疑是合成键盘事件被游戏忽略。
+
+    很多游戏(Unity / DirectInput / Raw Input)读的是**扫描码**,对只有虚拟键
+    的事件不予理会。补上 `KEYEVENTF_SCANCODE` + `MapVirtualKey(vk, MAPVK_VK_TO_VSC)`
+    之后,事件才与真实硬件按键同构。
+
+    ⚠️ 诚实边界:**这是"最可能的修法",不是"已证实的修法"** —— 注入是否真进了
+    游戏,必须用一个**能观测到的副作用**去验(见 `tools/diag_key_probe.py`),
+    不能靠"我发了"就认为"它收到了"。
+
+    历史:`vk=0x52`(R)曾被注释为「Aim Lab 的"再练一次"热键」,实测无效;
+    用户指出真正的键是 **F6(0x75)**。调用方请用 `vk_from_name()` 取码。
+    """
+    vk = int(vk)
     inp = _INPUT()
     inp.type = _INPUT_KEYBOARD
-    inp.ki.wVk = int(vk)
-    inp.ki.dwFlags = 0  # keydown
+    scan = 0
+    if use_scancode:
+        scan = int(ctypes.windll.user32.MapVirtualKeyW(vk, _MAPVK_VK_TO_VSC))
+    flags_down = _KEYEVENTF_SCANCODE if use_scancode else 0
+    inp.ki.wVk = vk
+    inp.ki.wScan = scan
+    inp.ki.dwFlags = flags_down
     ok1 = ctypes.windll.user32.SendInput(
         1, ctypes.byref(inp), ctypes.sizeof(_INPUT)) == _SENDINPUT_OK
     time.sleep(0.02)
-    inp.ki.dwFlags = _KEYEVENTF_KEYUP
+    inp.ki.dwFlags = flags_down | _KEYEVENTF_KEYUP
     ok2 = ctypes.windll.user32.SendInput(
         1, ctypes.byref(inp), ctypes.sizeof(_INPUT)) == _SENDINPUT_OK
     return ok1 and ok2

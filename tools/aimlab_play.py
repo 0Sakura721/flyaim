@@ -37,7 +37,12 @@ from flyaim.bridge.controllers import (  # noqa: E402
 )
 from flyaim.bridge.detect import find_target  # noqa: E402
 from flyaim.bridge.gain import GainModel  # noqa: E402
-from flyaim.bridge.inject import SendInputSink, click_at, press_key  # noqa: E402
+from flyaim.bridge.inject import (  # noqa: E402
+    SendInputSink,
+    click_at,
+    press_key,
+    vk_from_name,
+)
 from flyaim.bridge.loop import BridgeLoop  # noqa: E402
 from flyaim.config import BrainConfig, ReadoutConfig, RetinaConfig  # noqa: E402
 
@@ -222,6 +227,12 @@ def parse_args() -> argparse.Namespace:
                          "却毫无告警(2026-10-06 实盘教训)")
     ap.add_argument("--no-round-gate", action="store_true",
                     help="关掉开局门闸(退回旧行为:**不保证在计分局里**)")
+    ap.add_argument("--start-key", default="f6", metavar="KEY",
+                    help="开局(重开)热键,默认 **f6**。接受 F1-F24 / 单个字母或"
+                         "数字 / space / enter / esc / 0x75 这种十六进制。"
+                         "**实测教训**:原先把 0x52(R)写死并注释成「Aim Lab 的"
+                         "再练一次热键」,在靶场里连按 7 次完全无效(TIME 全程∞);"
+                         "用户指出真正的键是 F6。所以这里必须可配置")
     ap.add_argument("--allow-practice", action="store_true",
                     help="门闸超时后仍然开跑(练习局数据会被标注**不可与目标比较**)")
     ap.add_argument("--runs-dir", default=None, metavar="DIR",
@@ -241,7 +252,7 @@ def _task_running(cap_region) -> bool:
 
 
 def autostart_task(cap_region, tries: int = 3, require_target: bool = False,
-                   hud_running=None) -> bool:
+                   hud_running=None, start_key: int = 0x75) -> bool:
     """尝试进入一局**计分**任务。
 
     ===========================================================================
@@ -257,9 +268,15 @@ def autostart_task(cap_region, tries: int = 3, require_target: bool = False,
     (即 `time_glyph_count() == 5`)。它不依赖任何 OCR 模板,永远可用。
     青靶只用来区分"在大厅"还是"在靶场",**不再当作开局证据**。
 
-    **为什么在靶场里只按 R、不点击**:任务内的白色 HUD 文字会被误判成"大按钮",
-    点一下就把刚开的一局点没(原实现吃过这个亏)。靶场里没有「点击开始」那种
-    大厅 UI,所以按热键 R 是安全的;点击只留给大厅/结算页。
+    **为什么在靶场里只按开局键、不点击**:任务内的白色 HUD 文字会被误判成
+    "大按钮",点一下就把刚开的一局点没(原实现吃过这个亏)。靶场里没有
+    「点击开始」那种大厅 UI,所以按热键是安全的;点击只留给大厅/结算页。
+
+    ⚠️ **开局键必须可配置**(2026-10-06 实测教训):原先把 `0x52`(R)写死,
+    注释还写着「Aim Lab 的"再练一次"热键」。实测在靶场里**连按 7 次无效**,
+    TIME 全程 `∞` —— 用户指出真正的键是 **F6(0x75)**。
+    写死的代价是每换一个游戏/版本都得改源码。默认值已改为 `0x75`(F6),
+    并可用 `--start-key` 覆盖。
 
     require_target:保留参数以兼容旧调用点,但语义已变(见上)。
     """
@@ -284,10 +301,11 @@ def autostart_task(cap_region, tries: int = 3, require_target: bool = False,
         tgt = find_target(frame, ref_color=TEAL, tolerance=60.0)
         if tgt.ok:
             saw_target = True
-        # 0) 在靶场里但还没开局 → **只按 R**(不点击,避免把 HUD 当按钮点掉)
+        # 0) 在靶场里但还没开局 → **只按开局键**(不点击,避免把 HUD 当按钮点掉)
         if tgt.ok and tgt.radius_px >= 15.0:
-            print(f"  autostart[{i}]: 靶场已就位(青靶 R{tgt.radius_px:.1f}),按 R 开局")
-            press_key(0x52)  # VK R = 再练一次/开始
+            print(f"  autostart[{i}]: 靶场已就位(青靶 R{tgt.radius_px:.1f}),"
+                  f"按开局键 VK=0x{start_key:02X}")
+            press_key(start_key)
             time.sleep(2.0)
             continue
         # 1) 大厅的「点击开始」固定文字(细笔画,面积阈值要小)
@@ -308,9 +326,9 @@ def autostart_task(cap_region, tries: int = 3, require_target: bool = False,
             click_at(sx, sy)
             time.sleep(2.0)
             continue
-        # 3) 结算页/未知页:按 R(再练一次热键)
-        print(f"  autostart[{i}]: 按 R(再练一次)")
-        press_key(0x52)
+        # 3) 结算页/未知页:按开局键
+        print(f"  autostart[{i}]: 按开局键 VK=0x{start_key:02X}")
+        press_key(start_key)
         time.sleep(2.0)
     if hud_running is not None:
         return bool(hud_running())
@@ -318,7 +336,7 @@ def autostart_task(cap_region, tries: int = 3, require_target: bool = False,
 
 
 def wait_for_round(strip, region, timeout_s: float = 45.0, auto_start: bool = True,
-                   allow_practice: bool = False) -> bool:
+                   allow_practice: bool = False, start_key: int = 0x75) -> bool:
     """等**真正的计分局**开始(HUD 的 TIME 显示 `MM:SS`)才返回 True。
 
     ===========================================================================
@@ -360,7 +378,7 @@ def wait_for_round(strip, region, timeout_s: float = 45.0, auto_start: bool = Tr
     while time.perf_counter() - t0 < timeout_s:
         if time.perf_counter() >= nxt_try:
             if auto_start:
-                autostart_task(region, tries=1)
+                autostart_task(region, tries=1, start_key=start_key)
             nxt_try = time.perf_counter() + 3.0
         ng = _state()
         if ng == 5:
@@ -1007,6 +1025,8 @@ def main() -> int:
         time_glyph_count
 
     hud_strip = None
+    start_vk = vk_from_name(args.start_key)
+    print(f"  开局键: {args.start_key} = VK 0x{start_vk:02X}")
     if args.score_every > 0:
         try:
             hud_strip = HudStrip(region, backend=args.hud_backend)
@@ -1034,7 +1054,7 @@ def main() -> int:
     # ⚠️ 门闸**故意放在最后**(紧挨 loop.run()):建捕获源、开局握手都会真实
     # 动鼠标,那些都该在 ∞ 练习态里做完,别吃掉计分局的时间。
     if args.no_round_gate and not args.no_autostart:
-        if not autostart_task(region):
+        if not autostart_task(region, start_key=start_vk):
             print("⚠️ autostart 未确认进入任务。仍继续(已显式关掉开局门闸)。")
         time.sleep(1.2)  # 等任务开场动画
     # dual 模式下 cap 就是 dual_source(它内部管两个窗);否则退化为单窗
@@ -1183,7 +1203,8 @@ def main() -> int:
     if not args.no_round_gate:
         if not wait_for_round(hud_strip, region, timeout_s=args.round_wait,
                               auto_start=not args.no_autostart,
-                              allow_practice=args.allow_practice):
+                              allow_practice=args.allow_practice,
+                              start_key=start_vk):
             if hud_strip is not None:
                 hud_strip.close()
             return 1
